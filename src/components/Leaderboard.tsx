@@ -1,9 +1,13 @@
 import React, { useMemo } from "react";
-import type { PlayerDoc } from "../lib/types";
+import type { LeaderboardRow, PlayerDoc } from "../lib/types";
 
-export function Leaderboard({ players }: { players: PlayerDoc[] }) {
-  const rows = useMemo(() => {
-    const enriched = players.map((p) => {
+export function Leaderboard({ players, rows }: { players?: PlayerDoc[]; rows?: LeaderboardRow[] }) {
+  const computedRows = useMemo(() => {
+    if (rows && rows.length) {
+      return [...rows].sort((a, b) => b.profit - a.profit);
+    }
+    const source = players ?? [];
+    const enriched = source.map((p) => {
       const orders = (p.ordersByWeek ?? []).filter((x) => typeof x === "number") as number[];
       const avgOrder = orders.length ? orders.reduce((a, b) => a + b, 0) / orders.length : 0;
       return {
@@ -15,7 +19,7 @@ export function Leaderboard({ players }: { players: PlayerDoc[] }) {
     });
     enriched.sort((a, b) => b.profit - a.profit);
     return enriched;
-  }, [players]);
+  }, [players, rows]);
 
   return (
     <div className="card">
@@ -34,7 +38,7 @@ export function Leaderboard({ players }: { players: PlayerDoc[] }) {
             </tr>
           </thead>
           <tbody>
-            {rows.map((r, idx) => (
+            {computedRows.map((r, idx) => (
               <tr key={r.uid} style={{ borderTop: "1px solid rgba(0,0,0,0.06)" }}>
                 <td style={{ padding: "8px 6px" }} className="mono">{idx + 1}</td>
                 <td style={{ padding: "8px 6px" }}>{r.name}</td>

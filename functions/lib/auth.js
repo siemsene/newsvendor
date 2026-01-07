@@ -35,11 +35,12 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.assertHost = assertHost;
 const admin = __importStar(require("firebase-admin"));
+const https_1 = require("firebase-functions/v2/https");
 async function assertHost(context) {
     if (!context.auth)
-        throw new Error("Unauthenticated");
+        throw new https_1.HttpsError("unauthenticated", "Please sign in.");
     const user = await admin.auth().getUser(context.auth.uid);
     const role = user.customClaims?.role ?? "player";
     if (role !== "host")
-        throw new Error("Permission denied: host only");
+        throw new https_1.HttpsError("permission-denied", "Host only.");
 }

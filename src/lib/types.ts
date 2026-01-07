@@ -2,6 +2,13 @@ export type Role = "host" | "player";
 
 export type SessionStatus = "lobby" | "training" | "ordering" | "revealing" | "finished";
 
+export type LeaderboardRow = {
+  uid: string;
+  name: string;
+  profit: number;
+  avgOrder: number;
+};
+
 export type SessionPublic = {
   code: string;
   createdAt?: any;
@@ -24,6 +31,8 @@ export type SessionPublic = {
   weeks: number;
   showLeaderboard?: boolean;
   drawFailed?: boolean;
+  leaderboard?: LeaderboardRow[];
+  endgameAvgOrderPerDay?: number[];
 };
 
 export type PlayerDoc = {

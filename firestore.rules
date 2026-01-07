@@ -4,20 +4,21 @@ service cloud.firestore {
 
     function isSignedIn() { return request.auth != null; }
     function isHost() { return isSignedIn() && request.auth.token.role == "host"; }
+    function isMember(sessionId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/sessions/$(sessionId)/players/$(request.auth.uid));
+    }
 
     match /sessions/{sessionId} {
-      allow read: if isSignedIn();
+      allow read: if isHost() || isMember(sessionId);
 
       allow create: if isHost();
       allow update: if isHost();
       allow delete: if isHost();
 
       match /players/{uid} {
-        allow read: if isSignedIn();
-        allow create: if isSignedIn() && request.auth.uid == uid;
-        allow update: if isSignedIn() && request.auth.uid == uid
-          && !( "isActive" in request.resource.data && request.resource.data.isActive == false );
-        allow delete: if false;
+        allow read: if isHost() || (isSignedIn() && request.auth.uid == uid);
+        allow write: if false;
       }
 
       match /private/{docId} {
@@ -25,7 +26,7 @@ service cloud.firestore {
       }
 
       match /events/{eventId} {
-        allow read: if isSignedIn();
+        allow read: if isHost();
         allow write: if isHost();
       }
     }

@@ -6,9 +6,11 @@ import { expandWeeklyOrdersToDays } from "../lib/gameMath";
 export function EndgameCharts({
   session,
   players,
+  avgOrderPerDayOverride,
 }: {
   session: SessionPublic;
-  players: PlayerDoc[];
+  players?: PlayerDoc[];
+  avgOrderPerDayOverride?: number[];
 }) {
   const days = session.revealedDemands ?? [];
   const optimalQ = session.optimalQ ?? 0;
@@ -17,14 +19,18 @@ export function EndgameCharts({
   const dayCount = Math.min(days.length, totalDays);
 
   const avgOrderPerDay = useMemo(() => {
-    const perPlayer = players.map((p) => expandWeeklyOrdersToDays(p.ordersByWeek ?? []));
+    if (avgOrderPerDayOverride && avgOrderPerDayOverride.length) {
+      return avgOrderPerDayOverride.slice(0, totalDays);
+    }
+    const sourcePlayers = players ?? [];
+    if (!sourcePlayers.length) return Array.from({ length: totalDays }, () => 0);
+    const perPlayer = sourcePlayers.map((p) => expandWeeklyOrdersToDays(p.ordersByWeek ?? []));
     const n = perPlayer.length || 1;
-    const out = Array.from({ length: totalDays }, (_, i) => {
+    return Array.from({ length: totalDays }, (_, i) => {
       const s = perPlayer.reduce((acc, arr) => acc + (arr[i] ?? 0), 0);
       return s / n;
     });
-    return out;
-  }, [players, totalDays]);
+  }, [players, totalDays, avgOrderPerDayOverride]);
 
   const avgDemand = useMemo(() => {
     if (!days.length) return 0;

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
-import { auth, db } from "../lib/firebase";
-import { doc, onSnapshot, collection } from "firebase/firestore";
+import { db } from "../lib/firebase";
+import { doc, onSnapshot } from "firebase/firestore";
 import type { PlayerDoc, SessionPublic } from "../lib/types";
 import { TrainingChart } from "../components/TrainingChart";
 import { mean, std } from "../lib/stats";
@@ -9,12 +9,13 @@ import { api } from "../lib/api";
 import { RevealTheatre } from "../components/RevealTheatre";
 import { Leaderboard } from "../components/Leaderboard";
 import { EndgameCharts } from "../components/EndgameCharts";
+import { useAuthState } from "../lib/useAuthState";
 
 export function PlayerGame() {
   const { sessionId } = useParams<{ sessionId: string }>();
+  const { user } = useAuthState();
   const [session, setSession] = useState<SessionPublic | null>(null);
   const [player, setPlayer] = useState<PlayerDoc | null>(null);
-  const [players, setPlayers] = useState<PlayerDoc[]>([]);
   const [orderQty, setOrderQty] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
@@ -25,17 +26,22 @@ export function PlayerGame() {
     const unsubS = onSnapshot(doc(db, "sessions", sessionId), (snap) => {
       setSession(snap.exists() ? (snap.data() as any) : null);
     });
-    const unsubP = onSnapshot(collection(db, "sessions", sessionId, "players"), (snap) => {
-      const rows = snap.docs.map((d) => ({ uid: d.id, ...(d.data() as any) })) as any;
-      setPlayers(rows);
-      const me = rows.find((r: any) => r.uid === auth.currentUser?.uid) ?? null;
-      setPlayer(me);
-    });
     return () => {
       unsubS();
-      unsubP();
     };
   }, [sessionId]);
+
+  useEffect(() => {
+    if (!sessionId || !user?.uid) return;
+    const unsub = onSnapshot(doc(db, "sessions", sessionId, "players", user.uid), (snap) => {
+      if (!snap.exists()) {
+        setPlayer(null);
+        return;
+      }
+      setPlayer({ uid: user.uid, ...(snap.data() as any) });
+    });
+    return () => unsub();
+  }, [sessionId, user?.uid]);
 
 
   const training = session?.trainingDemands ?? [];
@@ -49,10 +55,6 @@ export function PlayerGame() {
   const totalDays = (session?.trainingDemands?.length ?? 50) + weeks * 5;
   const submittedThisWeek = player?.ordersByWeek?.[weekIndex] ?? null;
   const canSubmit = session?.status !== "training";
-  const submittedCount = useMemo(() => {
-    return players.filter((p) => (p.ordersByWeek?.[weekIndex] ?? null) !== null).length;
-  }, [players, weekIndex]);
-  const allSubmitted = players.length > 0 && submittedCount === players.length;
 
   async function submit() {
     if (!sessionId || !session) return;
@@ -169,16 +171,20 @@ export function PlayerGame() {
         </div>
 
         {inputError && <p className="small" style={{ color: "#7a2d2d" }}>{inputError}</p>}
-        {submittedThisWeek !== null && !allSubmitted && (
+        {submittedThisWeek !== null && (
           <p className="small">Bake plan submitted. Waiting for others...</p>
         )}
         {msg && <div className="hr" />}
         {msg && <p className="small">{msg}</p>}
       </div>
 
-      {(session.status === "finished" || session.showLeaderboard) && <Leaderboard players={players} />}
+      {(session.status === "finished" || session.showLeaderboard) && (
+        <Leaderboard rows={session.leaderboard ?? []} />
+      )}
 
-      {session.status === "finished" && <EndgameCharts session={session} players={players} />}
+      {session.status === "finished" && (
+        <EndgameCharts session={session} avgOrderPerDayOverride={session.endgameAvgOrderPerDay} />
+      )}
     </div>
   );
 }
