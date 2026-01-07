@@ -18,7 +18,8 @@ export function profitForDay({
 
 export function expandWeeklyOrdersToDays(ordersByWeek: Array<number | null>) {
   const out: number[] = [];
-  for (let w = 0; w < 10; w++) {
+  const weeks = ordersByWeek.length;
+  for (let w = 0; w < weeks; w++) {
     const q = ordersByWeek[w] ?? 0;
     for (let d = 0; d < 5; d++) out.push(q);
   }
@@ -40,7 +41,7 @@ export function computeWeeklyWhatIf({
   optimalQ: number;
   delta: number;
 }) {
-  const weeks = 10;
+  const weeks = Math.floor(inGameDemands.length / 5);
   const rows: Array<any> = [];
   for (let w = 0; w < weeks; w++) {
     const start = w * 5;

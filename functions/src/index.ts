@@ -49,19 +49,23 @@ export const createSession = onCall(async (request) => {
   const price = Number(request.data?.price ?? 1.0);
   const cost = Number(request.data?.cost ?? 0.2);
   const salvage = Number(request.data?.salvage ?? 0.0);
+  const weeks = Math.round(Number(request.data?.weeks ?? 10));
 
   if (!(demandSigma > 0)) throw new HttpsError("invalid-argument", "demandSigma must be > 0");
   if (!(price > 0)) throw new HttpsError("invalid-argument", "price must be > 0");
+  if (!(weeks >= 1 && weeks <= 52)) throw new HttpsError("invalid-argument", "weeks must be between 1 and 52");
 
   const code = makeCode();
   const sessionRef = db.collection("sessions").doc();
   const sessionId = sessionRef.id;
 
   const seed = Math.floor(Math.random() * 2 ** 31);
+  const nGame = weeks * 5;
   const dataset = generateDemandDataset(
-    { mu: demandMu, sigma: demandSigma, nTrain: 50, nGame: 50, price, cost, salvage },
+    { mu: demandMu, sigma: demandSigma, nTrain: 50, nGame, price, cost, salvage },
     seed
   );
+  const drawFailed = dataset.training.length === 0 || dataset.inGame.length === 0;
 
   await sessionRef.set({
     code,
@@ -73,6 +77,7 @@ export const createSession = onCall(async (request) => {
     price,
     cost,
     salvage,
+    weeks,
 
     status: "training",
     weekIndex: 0,
@@ -82,6 +87,8 @@ export const createSession = onCall(async (request) => {
     revealedDemands: [],
 
     optimalQ: dataset.optimalQ,
+    showLeaderboard: false,
+    drawFailed,
   });
 
   await sessionRef.collection("private").doc("demand").set({
@@ -105,6 +112,8 @@ export const joinSession = onCall(async (request) => {
   if (snap.empty) throw new HttpsError("not-found", "Session code not found.");
 
   const sessionDoc = snap.docs[0];
+  const session = sessionDoc.data() as any;
+  const weeks = Math.round(Number(session?.weeks ?? 10));
   const sessionId = sessionDoc.id;
 
   const playerRef = db.collection("sessions").doc(sessionId).collection("players").doc(uid);
@@ -114,7 +123,7 @@ export const joinSession = onCall(async (request) => {
       name,
       joinedAt: admin.firestore.FieldValue.serverTimestamp(),
       isActive: true,
-      ordersByWeek: Array.from({ length: 10 }, () => null),
+      ordersByWeek: Array.from({ length: Math.max(1, weeks) }, () => null),
       dailyProfit: [],
       cumulativeProfit: 0,
       submittedWeek: null,
@@ -134,12 +143,14 @@ export const submitOrder = onCall(async (request) => {
   const orderQty = Math.max(0, Math.round(Number(request.data?.orderQty ?? 0)));
 
   if (!sessionId) throw new HttpsError("invalid-argument", "Missing sessionId.");
-  if (!(weekIndex >= 0 && weekIndex < 10)) throw new HttpsError("invalid-argument", "Invalid weekIndex.");
 
   const sessionRef = db.collection("sessions").doc(sessionId);
   const sessionSnap = await sessionRef.get();
   if (!sessionSnap.exists) throw new HttpsError("not-found", "Session not found.");
   const session = sessionSnap.data() as any;
+  const weeks = Math.round(Number(session.weeks ?? 10));
+
+  if (!(weekIndex >= 0 && weekIndex < weeks)) throw new HttpsError("invalid-argument", "Invalid weekIndex.");
 
   if (!["training", "ordering"].includes(session.status)) {
     throw new HttpsError("failed-precondition", "Not accepting orders right now.");
@@ -155,7 +166,8 @@ export const submitOrder = onCall(async (request) => {
     if (!pSnap.exists) throw new HttpsError("not-found", "Player doc not found. Join session first.");
     const p = pSnap.data() as any;
 
-    const orders = Array.isArray(p.ordersByWeek) ? p.ordersByWeek : Array.from({ length: 10 }, () => null);
+    const baseOrders = Array.isArray(p.ordersByWeek) ? p.ordersByWeek : [];
+    const orders = baseOrders.length === weeks ? baseOrders : Array.from({ length: weeks }, (_, i) => baseOrders[i] ?? null);
     orders[weekIndex] = orderQty;
 
     tx.set(
@@ -207,12 +219,16 @@ export const advanceReveal = onCall(async (request) => {
   const session = sessionSnap.data() as any;
 
   const revealIndex: number = session.revealIndex ?? 0;
-  if (revealIndex >= 50) throw new HttpsError("failed-precondition", "All days already revealed.");
+  const weeks = Math.round(Number(session.weeks ?? 10));
+  const totalDays = weeks * 5;
+  if (revealIndex >= totalDays) throw new HttpsError("failed-precondition", "All days already revealed.");
 
   const privateSnap = await privateRef.get();
   if (!privateSnap.exists) throw new HttpsError("not-found", "Private demand doc missing.");
   const inGame = (privateSnap.data() as any).inGameDemands as number[];
-  if (!Array.isArray(inGame) || inGame.length < 50) throw new HttpsError("internal", "Invalid in-game demand series.");
+  if (!Array.isArray(inGame) || inGame.length < totalDays) {
+    throw new HttpsError("internal", "Invalid in-game demand series.");
+  }
 
   const D = inGame[revealIndex];
   const dayIndex = revealIndex;
@@ -233,7 +249,8 @@ export const advanceReveal = onCall(async (request) => {
 
   playersSnap.docs.forEach((pdoc) => {
     const p = pdoc.data() as any;
-    const orders: Array<number | null> = Array.isArray(p.ordersByWeek) ? p.ordersByWeek : Array.from({ length: 10 }, () => null);
+    const baseOrders = Array.isArray(p.ordersByWeek) ? p.ordersByWeek : [];
+    const orders: Array<number | null> = baseOrders.length === weeks ? baseOrders : Array.from({ length: weeks }, (_, i) => baseOrders[i] ?? null);
     const Q = Math.max(0, Math.round(Number(orders[weekIndex] ?? 0)));
 
     const pf = profitForDay(D, Q, price, cost, salvage);
@@ -270,11 +287,11 @@ export const advanceReveal = onCall(async (request) => {
   let nextStatus = String(session.status ?? "training");
   let nextWeek = Number(session.weekIndex ?? 0);
 
-  if (nextReveal === 50) {
+  if (nextReveal === totalDays) {
     nextStatus = "finished";
-    nextWeek = 9;
+    nextWeek = Math.max(0, weeks - 1);
   } else if (nextReveal % 5 === 0) {
-    nextWeek = Math.min(9, weekIndex + 1);
+    nextWeek = Math.min(weeks - 1, weekIndex + 1);
     nextStatus = "ordering";
   } else {
     nextStatus = "revealing";
@@ -290,4 +307,117 @@ export const advanceReveal = onCall(async (request) => {
 
   await batch.commit();
   return { ok: true, revealIndex: nextReveal };
+});
+
+export const startSession = onCall(async (request) => {
+  await assertHost(request);
+  const sessionId = String(request.data?.sessionId ?? "");
+  if (!sessionId) throw new HttpsError("invalid-argument", "Missing sessionId.");
+
+  const sessionRef = db.collection("sessions").doc(sessionId);
+  const sessionSnap = await sessionRef.get();
+  if (!sessionSnap.exists) throw new HttpsError("not-found", "Session not found.");
+  const session = sessionSnap.data() as any;
+
+  if (session.status !== "training") {
+    throw new HttpsError("failed-precondition", "Session already started.");
+  }
+
+  await sessionRef.update({
+    status: "ordering",
+    weekIndex: 0,
+    revealIndex: 0,
+  });
+
+  return { ok: true };
+});
+
+export const redrawSession = onCall(async (request) => {
+  await assertHost(request);
+  const sessionId = String(request.data?.sessionId ?? "");
+  if (!sessionId) throw new HttpsError("invalid-argument", "Missing sessionId.");
+
+  const sessionRef = db.collection("sessions").doc(sessionId);
+  const sessionSnap = await sessionRef.get();
+  if (!sessionSnap.exists) throw new HttpsError("not-found", "Session not found.");
+  const session = sessionSnap.data() as any;
+
+  if (session.status !== "training") {
+    throw new HttpsError("failed-precondition", "Session already started.");
+  }
+
+  const seed = Math.floor(Math.random() * 2 ** 31);
+  const weeks = Math.round(Number(session.weeks ?? 10));
+  const dataset = generateDemandDataset(
+    {
+      mu: Number(session.demandMu ?? 50),
+      sigma: Number(session.demandSigma ?? 20),
+      nTrain: 50,
+      nGame: weeks * 5,
+      price: Number(session.price ?? 1.0),
+      cost: Number(session.cost ?? 0.2),
+      salvage: Number(session.salvage ?? 0.0),
+    },
+    seed
+  );
+  const drawFailed = dataset.training.length === 0 || dataset.inGame.length === 0;
+
+  if (drawFailed) {
+    await sessionRef.update({ drawFailed: true });
+    return { ok: false };
+  }
+
+  await sessionRef.update({
+    trainingDemands: dataset.training,
+    revealedDemands: [],
+    optimalQ: dataset.optimalQ,
+    weekIndex: 0,
+    revealIndex: 0,
+    status: "training",
+    leaderboard: [],
+    drawFailed: false,
+  });
+
+  await sessionRef.collection("private").doc("demand").set({
+    inGameDemands: dataset.inGame,
+    seed,
+    generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  return { ok: true };
+});
+
+export const endSession = onCall(async (request) => {
+  await assertHost(request);
+  const sessionId = String(request.data?.sessionId ?? "");
+  if (!sessionId) throw new HttpsError("invalid-argument", "Missing sessionId.");
+
+  const sessionRef = db.collection("sessions").doc(sessionId);
+  const sessionSnap = await sessionRef.get();
+  if (!sessionSnap.exists) throw new HttpsError("not-found", "Session not found.");
+  const session = sessionSnap.data() as any;
+  const weeks = Math.round(Number(session?.weeks ?? 10));
+  const totalDays = weeks * 5;
+
+  await sessionRef.update({
+    status: "finished",
+    revealIndex: totalDays,
+    weekIndex: Math.max(0, weeks - 1),
+  });
+
+  return { ok: true };
+});
+
+export const kickPlayer = onCall(async (request) => {
+  await assertHost(request);
+  const sessionId = String(request.data?.sessionId ?? "");
+  const uid = String(request.data?.uid ?? "");
+  if (!sessionId || !uid) throw new HttpsError("invalid-argument", "Missing args.");
+
+  const playerRef = db.collection("sessions").doc(sessionId).collection("players").doc(uid);
+  const playerSnap = await playerRef.get();
+  if (!playerSnap.exists) throw new HttpsError("not-found", "Player not found.");
+
+  await playerRef.delete();
+  return { ok: true };
 });

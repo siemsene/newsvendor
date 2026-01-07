@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { auth } from "./firebase";
-import { onAuthStateChanged, User, getIdTokenResult } from "firebase/auth";
+import { onIdTokenChanged, User, getIdTokenResult } from "firebase/auth";
 import type { Role } from "./types";
 
 export function useAuthState() {
@@ -8,7 +8,7 @@ export function useAuthState() {
   const [role, setRole] = useState<Role>("player");
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (u) => {
+    const unsub = onIdTokenChanged(auth, async (u) => {
       setUser(u);
       if (u) {
         const token = await getIdTokenResult(u, true);

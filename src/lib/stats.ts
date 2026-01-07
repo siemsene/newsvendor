@@ -8,6 +8,24 @@ export function std(xs: number[]) {
   return Math.sqrt(v);
 }
 
+export function skewness(xs: number[]) {
+  const m = mean(xs);
+  const s = std(xs);
+  if (s <= 0) return 0;
+  const n = xs.length || 1;
+  const m3 = xs.reduce((a, b) => a + (b - m) ** 3, 0) / n;
+  return m3 / Math.max(1e-9, s ** 3);
+}
+
+export function excessKurtosis(xs: number[]) {
+  const m = mean(xs);
+  const s = std(xs);
+  if (s <= 0) return 0;
+  const n = xs.length || 1;
+  const m4 = xs.reduce((a, b) => a + (b - m) ** 4, 0) / n;
+  return m4 / Math.max(1e-9, s ** 4) - 3;
+}
+
 export function histogram(values: number[], binCount: number) {
   const min = Math.min(...values);
   const max = Math.max(...values);

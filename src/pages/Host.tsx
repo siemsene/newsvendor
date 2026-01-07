@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { db } from "../lib/firebase";
-import { collection, onSnapshot, orderBy, query, where } from "firebase/firestore";
+import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { useAuthState } from "../lib/useAuthState";
 import type { SessionPublic } from "../lib/types";
 import { Link } from "react-router-dom";
@@ -15,21 +15,38 @@ export function Host() {
     price: 1.0,
     cost: 0.2,
     salvage: 0.0,
+    weeks: 10,
   });
 
   const [created, setCreated] = useState<{ sessionId: string; code: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string>("");
+  const [listMsg, setListMsg] = useState<string>("");
 
   const [sessions, setSessions] = useState<Array<{ id: string; data: SessionPublic }>>([]);
 
   useEffect(() => {
     if (!user) return;
-    const q = query(collection(db, "sessions"), where("createdByUid", "==", user.uid), orderBy("createdAt", "desc"));
-    return onSnapshot(q, (snap) => {
-      const rows = snap.docs.map((d) => ({ id: d.id, data: d.data() as any }));
-      setSessions(rows);
-    });
+    const q = query(collection(db, "sessions"), where("createdByUid", "==", user.uid));
+    return onSnapshot(
+      q,
+      (snap) => {
+        const rows = snap.docs
+          .map((d) => ({ id: d.id, data: d.data() as any }))
+          .filter((row) => row.data?.status !== "finished")
+          .sort((a, b) => {
+            const aMs = (a.data.createdAt?.toMillis?.() ?? 0) as number;
+            const bMs = (b.data.createdAt?.toMillis?.() ?? 0) as number;
+            return bMs - aMs;
+          });
+        setSessions(rows);
+        setListMsg("");
+      },
+      (err) => {
+        console.error(err);
+        setListMsg(err?.message ?? "Failed to load sessions.");
+      }
+    );
   }, [user]);
 
   async function createSession() {
@@ -40,11 +57,26 @@ export function Host() {
     }
     setBusy(true);
     try {
-      const res = await api.createSession(params);
+      const weeks = Math.max(1, Math.min(52, Math.round(Number(params.weeks ?? 10))));
+      const res = await api.createSession({ ...params, weeks });
       setCreated(res.data);
     } catch (e: any) {
       console.error(e);
       setMsg(e?.message ?? "Create session failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function endSession(sessionId: string) {
+    setListMsg("");
+    setBusy(true);
+    try {
+      await api.endSession({ sessionId });
+      setListMsg("Session ended.");
+    } catch (e: any) {
+      console.error(e);
+      setListMsg(e?.message ?? "End session failed");
     } finally {
       setBusy(false);
     }
@@ -90,6 +122,20 @@ export function Host() {
           </div>
         </div>
 
+        <div className="grid two">
+          <div>
+            <label>Weeks in game</label>
+            <input
+              type="number"
+              min={1}
+              max={52}
+              step={1}
+              value={params.weeks}
+              onChange={(e) => setParams((p) => ({ ...p, weeks: Math.max(1, Math.min(52, Math.round(Number(e.target.value)))) }))}
+            />
+          </div>
+        </div>
+
         <div className="row" style={{ marginTop: 12 }}>
           <button className="btn" disabled={busy} onClick={createSession}>
             Create session
@@ -103,9 +149,6 @@ export function Host() {
             <p>
               Session created! Code: <span className="badge mono">{created.code}</span>
             </p>
-            <Link className="btn secondary" to={`/host/session/${created.sessionId}`}>
-              Open host control room →
-            </Link>
           </>
         )}
 
@@ -117,6 +160,7 @@ export function Host() {
         <h2>Your sessions</h2>
         <p className="small">Click to open the host control room.</p>
         <div className="hr" />
+        {listMsg && <p style={{ color: "#7a2d2d" }}>{listMsg}</p>}
         {sessions.length === 0 ? (
           <p className="small">No sessions yet.</p>
         ) : (
@@ -126,10 +170,23 @@ export function Host() {
                 <div className="row">
                   <div>
                     <div style={{ fontWeight: 800 }}>Code: <span className="mono">{s.data.code}</span></div>
-                    <div className="small">Status: <span className="mono">{s.data.status}</span> · Week: <span className="mono">{(s.data.weekIndex ?? 0) + 1}</span></div>
+                    <div className="small">Week: <span className="mono">{(s.data.weekIndex ?? 0) + 1}</span></div>
                   </div>
                   <div className="spacer" />
-                  <Link className="btn secondary" to={`/host/session/${s.id}`}>Open</Link>
+                  <div className="row">
+                    <Link className="btn secondary" to={`/host/session/${s.id}`}>Open</Link>
+                    <button
+                      className="btn ghost"
+                      disabled={busy || s.data.status === "finished"}
+                      onClick={() => {
+                        if (confirm("End this session for all players?")) {
+                          endSession(s.id);
+                        }
+                      }}
+                    >
+                      End
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}

@@ -21,6 +21,9 @@ export type SessionPublic = {
   revealedDemands: number[];
 
   optimalQ: number;
+  weeks: number;
+  showLeaderboard?: boolean;
+  drawFailed?: boolean;
 };
 
 export type PlayerDoc = {

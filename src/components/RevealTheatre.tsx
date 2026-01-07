@@ -14,7 +14,14 @@ export function RevealTheatre({
   player: PlayerDoc;
 }) {
   const revealIndex = session.revealIndex ?? 0;
+  const weeks = session.weeks ?? 10;
+  const totalDays = weeks * 5;
   const revealed = session.revealedDemands ?? [];
+  const training = session.trainingDemands ?? [];
+  const meanHat = training.length ? training.reduce((a, b) => a + b, 0) / training.length : 0;
+  const stdHat = training.length > 1
+    ? Math.sqrt(training.reduce((a, b) => a + (b - meanHat) ** 2, 0) / (training.length - 1))
+    : 0;
 
   const [toast, setToast] = useState<string>("");
   const [showToast, setShowToast] = useState(false);
@@ -37,6 +44,8 @@ export function RevealTheatre({
   const weekDays = revealed.slice(weekStart, weekStart + 5);
 
   const orderQty = player.ordersByWeek?.[currentWeekIndex] ?? null;
+  const currentWeekOrder = player.ordersByWeek?.[session.weekIndex ?? 0] ?? null;
+  const isDeciding = currentWeekOrder === null;
 
   const daily = useMemo(() => {
     return weekDays.map((d, idx) => {
@@ -51,16 +60,20 @@ export function RevealTheatre({
 
   return (
     <div className="card">
-      <h2>Weekly reveal theatre</h2>
+      <h2>Revealed Demand</h2>
       <p className="small">
         Demand is revealed day-by-day (Mon–Fri). Your bake plan is constant for the whole week.
       </p>
 
       <div className="kpi">
-        <div className="pill">Week: <span className="mono">{(session.weekIndex ?? 0) + 1}/10</span></div>
-        <div className="pill">Revealed days: <span className="mono">{revealIndex}/50</span></div>
-        <div className="pill">Your bake plan (this week): <span className="mono">{orderQty ?? "—"}</span></div>
-        <div className="pill">Week profit so far: <span className="mono">{weeklyProfit.toFixed(2)}</span></div>
+        <div className="pill">Week: <span className="mono">{(session.weekIndex ?? 0) + 1}/{weeks}</span></div>
+        <div className="pill">Revealed days: <span className="mono">{revealIndex}/{totalDays}</span></div>
+        <div className="pill">
+          Your bake plan ({isDeciding ? "last week" : "this week"}): <span className="mono">{orderQty ?? "—"}</span>
+        </div>
+        <div className="pill">
+          Total profit {isDeciding ? "last week" : "in week"}: <span className="mono">{weeklyProfit.toFixed(2)}</span>
+        </div>
         <div className="pill">Cumulative profit: <span className="mono">{cum.toFixed(2)}</span></div>
       </div>
 
@@ -71,6 +84,8 @@ export function RevealTheatre({
           const d = weekDays[i];
           const entry = daily.find((x) => x.idx === i);
           const isRevealed = typeof d === "number";
+          const isHigh = isRevealed && d > meanHat + stdHat;
+          const isLow = isRevealed && d < meanHat - stdHat;
           return (
             <motion.div
               key={i}
@@ -84,7 +99,8 @@ export function RevealTheatre({
                 {DOW[i]}
               </div>
               <div style={{ fontSize: 26, fontWeight: 800, marginTop: 8 }}>
-                {isRevealed ? d : "?"}
+                {isRevealed ? d : "?"}{" "}
+                {isHigh ? "☀️" : isLow ? "🌧️" : ""}
               </div>
               <div className="small">demand</div>
 

@@ -1,7 +1,9 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
+import { auth } from "../lib/firebase";
 import { useAuthState } from "../lib/useAuthState";
+import dragons from "../assets/dragons.png";
 
 export function Landing() {
   const nav = useNavigate();
@@ -33,6 +35,7 @@ export function Landing() {
     setBusy(true);
     try {
       await api.hostLogin({ password: hostPw });
+      await auth.currentUser?.getIdToken(true);
       nav("/host");
     } catch (e: any) {
       console.error(e);
@@ -43,8 +46,19 @@ export function Landing() {
   }
 
   return (
-    <div className="grid two">
-      <div className="card">
+    <div
+      className="grid two"
+      style={{
+        backgroundImage: `url(${dragons})`,
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        backgroundRepeat: "no-repeat",
+        minHeight: "100vh",
+        padding: 16,
+        borderRadius: 16,
+      }}
+    >
+      <div className="card" style={{ background: "rgba(255,255,255,0.7)", maxWidth: 420 }}>
         <h2>Join a session (players)</h2>
         <p>Enter the session code from the host and choose your baker name.</p>
 
@@ -58,31 +72,26 @@ export function Landing() {
           <button className="btn" disabled={busy || !code.trim() || !name.trim()} onClick={join}>
             Join bakery 🥐
           </button>
-          <span className="small">You&#39;ll be signed in anonymously.</span>
         </div>
 
         {msg && <div className="hr" />}
         {msg && <p style={{ color: "#7a2d2d" }}>{msg}</p>}
       </div>
 
-      <div className="card">
+
+      <div className="card" style={{ background: "rgba(255,255,255,0.7)", maxWidth: 420 }}>
         <h2>Host login</h2>
         <p>Hosts can create sessions, set parameters, and run the reveal theatre.</p>
 
         <label>Host password</label>
-        <input type="password" value={hostPw} onChange={(e) => setHostPw(e.target.value)} placeholder="Sesame" />
+        <input type="password" value={hostPw} onChange={(e) => setHostPw(e.target.value)} />
 
         <div className="row" style={{ marginTop: 12 }}>
           <button className="btn" disabled={busy || !hostPw.trim()} onClick={hostLogin}>
             Enter kitchen 👩‍🍳
           </button>
-          <span className="badge">{role === "host" ? "You are host" : "Player mode"}</span>
         </div>
 
-        <div className="hr" />
-        <p className="small">
-          Tip: set the password securely with <span className="mono">firebase functions:secrets:set HOST_PASSWORD</span>.
-        </p>
       </div>
     </div>
   );
