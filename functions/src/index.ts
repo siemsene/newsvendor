@@ -18,6 +18,12 @@ function requireAuth(context: any) {
   return context.auth.uid as string;
 }
 
+async function requireHost(context: any) {
+  const uid = requireAuth(context);
+  await assertHost(context);
+  return uid;
+}
+
 function makeCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let out = "";
@@ -127,8 +133,7 @@ export const hostLogin = onCall({ secrets: [hostPassword] }, async (request) => 
 });
 
 export const createSession = onCall(async (request) => {
-  const uid = requireAuth(request);
-  await assertHost(request);
+  const uid = await requireHost(request);
 
   const demandMu = Number(request.data?.demandMu ?? 50);
   const demandSigma = Number(request.data?.demandSigma ?? 20);
@@ -234,8 +239,9 @@ export const submitOrder = onCall(async (request) => {
     const weeks = Math.round(Number(session.weeks ?? 10));
 
     if (!(weekIndex >= 0 && weekIndex < weeks)) throw new HttpsError("invalid-argument", "Invalid weekIndex.");
-    if (!["training", "ordering"].includes(session.status)) {
-      throw new HttpsError("failed-precondition", "Not accepting orders right now.");
+    if (session.status !== "ordering") {
+      const msg = session.status === "training" ? "Session has not started." : "Not accepting orders right now.";
+      throw new HttpsError("failed-precondition", msg);
     }
     if (session.weekIndex !== weekIndex) {
       throw new HttpsError("failed-precondition", `Week mismatch. Current week is ${session.weekIndex}.`);
@@ -259,19 +265,21 @@ export const submitOrder = onCall(async (request) => {
       { merge: true }
     );
 
-    if (session.status === "training") {
-      tx.update(sessionRef, { status: "ordering" });
-    }
   });
 
   return { ok: true };
 });
 
 export const nudgePlayer = onCall(async (request) => {
-  await assertHost(request);
+  const uid = await requireHost(request);
   const sessionId = String(request.data?.sessionId ?? "");
   const targetUid = String(request.data?.uid ?? "");
   if (!sessionId || !targetUid) throw new HttpsError("invalid-argument", "Missing args.");
+
+  const sessionSnap = await db.collection("sessions").doc(sessionId).get();
+  if (!sessionSnap.exists) throw new HttpsError("not-found", "Session not found.");
+  const session = sessionSnap.data() as any;
+  if (session.createdByUid !== uid) throw new HttpsError("permission-denied", "Host only.");
 
   const ref = db.collection("sessions").doc(sessionId).collection("players").doc(targetUid);
   await ref.set({ lastNudgedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
@@ -286,7 +294,7 @@ export const nudgePlayer = onCall(async (request) => {
 });
 
 export const advanceReveal = onCall(async (request) => {
-  await assertHost(request);
+  const uid = await requireHost(request);
   const sessionId = String(request.data?.sessionId ?? "");
   if (!sessionId) throw new HttpsError("invalid-argument", "Missing sessionId.");
 
@@ -298,6 +306,7 @@ export const advanceReveal = onCall(async (request) => {
     const sessionSnap = await tx.get(sessionRef);
     if (!sessionSnap.exists) throw new HttpsError("not-found", "Session not found.");
     const session = sessionSnap.data() as any;
+    if (session.createdByUid !== uid) throw new HttpsError("permission-denied", "Host only.");
 
     const revealIndex: number = session.revealIndex ?? 0;
     const weeks = Math.round(Number(session.weeks ?? 10));
@@ -408,7 +417,7 @@ export const advanceReveal = onCall(async (request) => {
 });
 
 export const startSession = onCall(async (request) => {
-  await assertHost(request);
+  const uid = await requireHost(request);
   const sessionId = String(request.data?.sessionId ?? "");
   if (!sessionId) throw new HttpsError("invalid-argument", "Missing sessionId.");
 
@@ -416,9 +425,13 @@ export const startSession = onCall(async (request) => {
   const sessionSnap = await sessionRef.get();
   if (!sessionSnap.exists) throw new HttpsError("not-found", "Session not found.");
   const session = sessionSnap.data() as any;
+  if (session.createdByUid !== uid) throw new HttpsError("permission-denied", "Host only.");
 
   if (session.status !== "training") {
     throw new HttpsError("failed-precondition", "Session already started.");
+  }
+  if (session.drawFailed || !Array.isArray(session.trainingDemands) || session.trainingDemands.length === 0) {
+    throw new HttpsError("failed-precondition", "Demand dataset not ready. Please redraw before starting.");
   }
 
   await sessionRef.update({
@@ -431,7 +444,7 @@ export const startSession = onCall(async (request) => {
 });
 
 export const redrawSession = onCall(async (request) => {
-  await assertHost(request);
+  const uid = await requireHost(request);
   const sessionId = String(request.data?.sessionId ?? "");
   if (!sessionId) throw new HttpsError("invalid-argument", "Missing sessionId.");
 
@@ -439,6 +452,7 @@ export const redrawSession = onCall(async (request) => {
   const sessionSnap = await sessionRef.get();
   if (!sessionSnap.exists) throw new HttpsError("not-found", "Session not found.");
   const session = sessionSnap.data() as any;
+  if (session.createdByUid !== uid) throw new HttpsError("permission-denied", "Host only.");
 
   if (session.status !== "training") {
     throw new HttpsError("failed-precondition", "Session already started.");
@@ -486,7 +500,7 @@ export const redrawSession = onCall(async (request) => {
 });
 
 export const endSession = onCall(async (request) => {
-  await assertHost(request);
+  const uid = await requireHost(request);
   const sessionId = String(request.data?.sessionId ?? "");
   if (!sessionId) throw new HttpsError("invalid-argument", "Missing sessionId.");
 
@@ -497,9 +511,9 @@ export const endSession = onCall(async (request) => {
     const sessionSnap = await tx.get(sessionRef);
     if (!sessionSnap.exists) throw new HttpsError("not-found", "Session not found.");
     const session = sessionSnap.data() as any;
+    if (session.createdByUid !== uid) throw new HttpsError("permission-denied", "Host only.");
     const weeks = Math.round(Number(session?.weeks ?? 10));
     const totalDays = weeks * 5;
-    const revealIndex = Math.max(0, Math.round(Number(session?.revealIndex ?? 0)));
 
     const privateSnap = await tx.get(privateRef);
     if (!privateSnap.exists) throw new HttpsError("not-found", "Private demand doc missing.");
@@ -508,9 +522,8 @@ export const endSession = onCall(async (request) => {
       throw new HttpsError("internal", "Invalid in-game demand series.");
     }
 
-    const revealed = Array.isArray(session.revealedDemands) ? session.revealedDemands : [];
-    const dayCount = Math.min(totalDays, revealed.length || revealIndex);
-    const usedDemands = (revealed.length ? revealed : inGame.slice(0, revealIndex)).slice(0, dayCount);
+    const usedDemands = inGame.slice(0, totalDays);
+    const dayCount = usedDemands.length;
 
     const price = Number(session.price ?? 1);
     const cost = Number(session.cost ?? 0.2);
@@ -577,16 +590,33 @@ export const endSession = onCall(async (request) => {
 });
 
 export const kickPlayer = onCall(async (request) => {
-  await assertHost(request);
+  const hostUid = await requireHost(request);
   const sessionId = String(request.data?.sessionId ?? "");
-  const uid = String(request.data?.uid ?? "");
-  if (!sessionId || !uid) throw new HttpsError("invalid-argument", "Missing args.");
+  const targetUid = String(request.data?.uid ?? "");
+  if (!sessionId || !targetUid) throw new HttpsError("invalid-argument", "Missing args.");
 
-  const playerRef = db.collection("sessions").doc(sessionId).collection("players").doc(uid);
-  const playerSnap = await playerRef.get();
-  if (!playerSnap.exists) throw new HttpsError("not-found", "Player not found.");
+  const sessionRef = db.collection("sessions").doc(sessionId);
+  const playerRef = sessionRef.collection("players").doc(targetUid);
 
-  await playerRef.delete();
+  await db.runTransaction(async (tx) => {
+    const sessionSnap = await tx.get(sessionRef);
+    if (!sessionSnap.exists) throw new HttpsError("not-found", "Session not found.");
+    const session = sessionSnap.data() as any;
+    if (session.createdByUid !== hostUid) throw new HttpsError("permission-denied", "Host only.");
+
+    const playerSnap = await tx.get(playerRef);
+    if (!playerSnap.exists) throw new HttpsError("not-found", "Player not found.");
+
+    tx.delete(playerRef);
+
+    const leaderboard = Array.isArray(session.leaderboard) ? session.leaderboard : [];
+    const nextLeaderboard = leaderboard.filter((row: any) => row?.uid !== targetUid);
+    tx.update(sessionRef, {
+      playersCount: admin.firestore.FieldValue.increment(-1),
+      leaderboard: nextLeaderboard,
+    });
+  });
+
   return { ok: true };
 });
 
