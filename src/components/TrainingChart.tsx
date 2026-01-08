@@ -13,6 +13,14 @@ export function TrainingChart({
   sigmaHat: number;
   totalDays: number;
 }) {
+  if (!demands.length) {
+    return (
+      <div className="card" style={{ display: "flex", flexDirection: "column" }}>
+        <h2>Demand Data</h2>
+        <p className="small">No demand data yet.</p>
+      </div>
+    );
+  }
   const bins = histogram(demands, 10);
   const curve = normalCurvePoints(meanHat, sigmaHat, bins.minX, bins.maxX, bins.data.length).map(
     (p) => p.y * bins.scaleToHistogram
