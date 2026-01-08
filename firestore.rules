@@ -4,30 +4,34 @@ service cloud.firestore {
 
     function isSignedIn() { return request.auth != null; }
     function isHost() { return isSignedIn() && request.auth.token.role == "host"; }
+    function isHostOwner(sessionId) {
+      return isHost() &&
+        get(/databases/$(database)/documents/sessions/$(sessionId)).data.createdByUid == request.auth.uid;
+    }
     function isMember(sessionId) {
       return isSignedIn() &&
         exists(/databases/$(database)/documents/sessions/$(sessionId)/players/$(request.auth.uid));
     }
 
     match /sessions/{sessionId} {
-      allow read: if isHost() || isMember(sessionId);
+      allow read: if isHostOwner(sessionId) || isMember(sessionId);
 
       allow create: if isHost();
-      allow update: if isHost();
-      allow delete: if isHost();
+      allow update: if isHostOwner(sessionId);
+      allow delete: if isHostOwner(sessionId);
 
       match /players/{uid} {
-        allow read: if isHost() || (isSignedIn() && request.auth.uid == uid);
+        allow read: if isHostOwner(sessionId) || (isSignedIn() && request.auth.uid == uid);
         allow write: if false;
       }
 
       match /private/{docId} {
-        allow read, write: if isHost();
+        allow read, write: if isHostOwner(sessionId);
       }
 
       match /events/{eventId} {
-        allow read: if isHost();
-        allow write: if isHost();
+        allow read: if isHostOwner(sessionId);
+        allow write: if isHostOwner(sessionId);
       }
     }
   }

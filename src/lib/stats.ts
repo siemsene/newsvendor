@@ -27,6 +27,9 @@ export function excessKurtosis(xs: number[]) {
 }
 
 export function histogram(values: number[], binCount: number) {
+  if (!values.length || binCount <= 0) {
+    return { data: [], minX: 0, maxX: 0, scaleToHistogram: 1 };
+  }
   const min = Math.min(...values);
   const max = Math.max(...values);
   const span = Math.max(1, max - min);
@@ -53,10 +56,18 @@ function normalPdf(x: number, mu: number, sigma: number) {
 }
 
 export function normalCurvePoints(mu: number, sigma: number, minX: number, maxX: number, points: number) {
+  const safePoints = Math.max(0, Math.floor(points));
+  if (!(sigma > 0) || safePoints === 0) {
+    const span = maxX - minX;
+    return Array.from({ length: safePoints }, (_, i) => {
+      const x = safePoints > 1 ? minX + (span * i) / (safePoints - 1) : minX;
+      return { x: Math.round(x * 10) / 10, y: 0 };
+    });
+  }
   const xs: { x: number; y: number }[] = [];
   const span = maxX - minX;
-  for (let i = 0; i < points; i++) {
-    const x = minX + (span * i) / (points - 1);
+  for (let i = 0; i < safePoints; i++) {
+    const x = safePoints > 1 ? minX + (span * i) / (safePoints - 1) : minX;
     xs.push({ x: Math.round(x * 10) / 10, y: normalPdf(x, mu, sigma) });
   }
   const maxY = Math.max(...xs.map((p) => p.y), 1e-9);
