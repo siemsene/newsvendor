@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 import type { SessionPublic, PlayerDoc } from "../lib/types";
 import { expandWeeklyOrdersToDays } from "../lib/gameMath";
 
@@ -16,7 +16,10 @@ export function EndgameCharts({
   const optimalQ = session.optimalQ ?? 0;
   const weeks = session.weeks ?? 10;
   const totalDays = weeks * 5;
-  const dayCount = Math.min(days.length, totalDays);
+  const rawReveal = Number(session.revealIndex);
+  const revealIndex = Number.isFinite(rawReveal) ? Math.max(0, Math.round(rawReveal)) : days.length;
+  const dayCount = Math.min(days.length, totalDays, revealIndex);
+  const playedDays = days.slice(0, dayCount);
 
   const avgOrderPerDay = useMemo(() => {
     if (avgOrderPerDayOverride && avgOrderPerDayOverride.length) {
@@ -33,10 +36,10 @@ export function EndgameCharts({
   }, [players, totalDays, avgOrderPerDayOverride]);
 
   const avgDemand = useMemo(() => {
-    if (!days.length) return 0;
-    const total = days.reduce((a, b) => a + b, 0);
-    return total / days.length;
-  }, [days]);
+    if (!playedDays.length) return 0;
+    const total = playedDays.reduce((a, b) => a + b, 0);
+    return total / playedDays.length;
+  }, [playedDays]);
 
   const lineData = useMemo(() => {
     return Array.from({ length: dayCount }, (_, i) => ({
@@ -48,7 +51,7 @@ export function EndgameCharts({
   }, [dayCount, avgDemand, optimalQ, avgOrderPerDay]);
 
   const payoffCurve = useMemo(() => {
-    const inGame = days.slice(0, totalDays);
+    const inGame = playedDays;
     if (inGame.length === 0) return [];
     const maxDemand = Math.max(...inGame, Number(optimalQ ?? 0));
     const maxQ = Math.max(10, Math.ceil(maxDemand + Number(session.demandSigma ?? 0)));
@@ -68,7 +71,7 @@ export function EndgameCharts({
       rows.push({ q, profit });
     }
     return rows;
-  }, [days, optimalQ, session.price, session.cost, session.salvage, session.demandSigma, totalDays]);
+  }, [playedDays, optimalQ, session.price, session.cost, session.salvage, session.demandSigma]);
 
   return (
     <div className="grid two">
@@ -81,7 +84,6 @@ export function EndgameCharts({
               <XAxis dataKey="day" />
               <YAxis />
               <Tooltip />
-              <Legend />
               <Line type="monotone" dataKey="avgDemand" dot={false} stroke="#0b3d91" strokeWidth={2} name="Avg demand" />
               <Line type="monotone" dataKey="optimalQ" dot={false} stroke="#d62828" strokeWidth={2} name="Optimal Q" />
               <Line type="monotone" dataKey="avgOrder" dot={false} stroke="#2a9d8f" strokeWidth={2} name="Avg order" />
@@ -97,15 +99,14 @@ export function EndgameCharts({
           <ResponsiveContainer>
             <LineChart data={payoffCurve}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="q" />
-              <YAxis />
+              <XAxis dataKey="q" label={{ value: "Order quantity", position: "insideBottom", offset: -6 }} />
+              <YAxis label={{ value: "Profit", angle: -90, position: "insideLeft", offset: 10 }} />
               <Tooltip
                 formatter={(value) => {
                   if (typeof value === "number") return Math.round(value);
                   return value as any;
                 }}
               />
-              <Legend />
               <Line type="monotone" dataKey="profit" dot={false} stroke="#6b4f2a" strokeWidth={2} name="Profit" />
             </LineChart>
           </ResponsiveContainer>

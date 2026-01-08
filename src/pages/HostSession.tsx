@@ -235,6 +235,22 @@ export function HostSession() {
     }
   }
 
+  async function endEarly() {
+    if (!sessionId) return;
+    if (!confirm("End the session early? This will finalize all remaining days.")) return;
+    setMsg("");
+    setBusy(true);
+    try {
+      await api.endSession({ sessionId });
+      setMsg("Session ended.");
+    } catch (e: any) {
+      console.error(e);
+      setMsg(e?.message ?? "End session failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function toggleLeaderboard(next: boolean) {
     if (!sessionId) return;
     setMsg("");
@@ -369,6 +385,11 @@ export function HostSession() {
               Submitted this week: <span className="mono">{submitted.length}/{players.length}</span>{" "}
               {allSubmitted ? "All in. Auto-reveal will run." : ""}
             </span>
+          )}
+          {session.status !== "finished" && (
+            <button className="btn secondary" disabled={busy} onClick={endEarly}>
+              End session early
+            </button>
           )}
           <div className="spacer" />
           <label className="small" style={{ display: "flex", alignItems: "center", gap: 8 }}>

@@ -22,6 +22,18 @@ export function TrainingChart({
     curve: curve[i] ?? 0,
   }));
   const series = demands.map((d, i) => ({ day: i + 1, demand: d }));
+  const latestIndex = series.length - 1;
+  const latestDot = (props: any) => {
+    const { cx, cy, index } = props;
+    if (typeof cx !== "number" || typeof cy !== "number") return <circle r={0} />;
+    if (index !== latestIndex) return <circle cx={cx} cy={cy} r={0} />;
+    return (
+      <g>
+        <circle key={`latest-ring-${latestIndex}`} className="latest-dot-ring" cx={cx} cy={cy} r={10} />
+        <circle className="latest-dot" cx={cx} cy={cy} r={4} />
+      </g>
+    );
+  };
 
   return (
     <div className="card" style={{ display: "flex", flexDirection: "column" }}>
@@ -52,7 +64,7 @@ export function TrainingChart({
             <XAxis dataKey="day" type="number" domain={[1, totalDays]} tick={{ fontSize: 11 }} allowDataOverflow />
             <YAxis />
             <Tooltip />
-            <Line type="monotone" dataKey="demand" dot={false} />
+            <Line type="monotone" dataKey="demand" dot={latestDot} isAnimationActive={false} />
           </ComposedChart>
         </ResponsiveContainer>
       </div>

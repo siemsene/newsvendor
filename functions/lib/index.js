@@ -442,16 +442,73 @@ exports.endSession = (0, https_1.onCall)(async (request) => {
     if (!sessionId)
         throw new https_1.HttpsError("invalid-argument", "Missing sessionId.");
     const sessionRef = db.collection("sessions").doc(sessionId);
-    const sessionSnap = await sessionRef.get();
-    if (!sessionSnap.exists)
-        throw new https_1.HttpsError("not-found", "Session not found.");
-    const session = sessionSnap.data();
-    const weeks = Math.round(Number(session?.weeks ?? 10));
-    const totalDays = weeks * 5;
-    await sessionRef.update({
-        status: "finished",
-        revealIndex: totalDays,
-        weekIndex: Math.max(0, weeks - 1),
+    const privateRef = sessionRef.collection("private").doc("demand");
+    await db.runTransaction(async (tx) => {
+        const sessionSnap = await tx.get(sessionRef);
+        if (!sessionSnap.exists)
+            throw new https_1.HttpsError("not-found", "Session not found.");
+        const session = sessionSnap.data();
+        const weeks = Math.round(Number(session?.weeks ?? 10));
+        const totalDays = weeks * 5;
+        const revealIndex = Math.max(0, Math.round(Number(session?.revealIndex ?? 0)));
+        const privateSnap = await tx.get(privateRef);
+        if (!privateSnap.exists)
+            throw new https_1.HttpsError("not-found", "Private demand doc missing.");
+        const inGame = privateSnap.data().inGameDemands;
+        if (!Array.isArray(inGame) || inGame.length < totalDays) {
+            throw new https_1.HttpsError("internal", "Invalid in-game demand series.");
+        }
+        const revealed = Array.isArray(session.revealedDemands) ? session.revealedDemands : [];
+        const dayCount = Math.min(totalDays, revealed.length || revealIndex);
+        const usedDemands = (revealed.length ? revealed : inGame.slice(0, revealIndex)).slice(0, dayCount);
+        const price = Number(session.price ?? 1);
+        const cost = Number(session.cost ?? 0.2);
+        const salvage = Number(session.salvage ?? 0);
+        const playersSnap = await tx.get(sessionRef.collection("players"));
+        const lbRows = [];
+        const sums = Array.from({ length: dayCount }, () => 0);
+        playersSnap.docs.forEach((pdoc) => {
+            const p = pdoc.data();
+            const baseOrders = Array.isArray(p.ordersByWeek) ? p.ordersByWeek : [];
+            const orders = baseOrders.length === weeks
+                ? baseOrders
+                : Array.from({ length: weeks }, (_, i) => baseOrders[i] ?? null);
+            const dailyOrders = expandWeeklyOrdersToDays(orders, totalDays);
+            const dailyProfit = [];
+            let cumulativeProfit = 0;
+            for (let i = 0; i < dayCount; i++) {
+                const Q = Math.max(0, Math.round(Number(dailyOrders[i] ?? 0)));
+                const D = usedDemands[i];
+                const pf = (0, profit_1.profitForDay)(D, Q, price, cost, salvage);
+                dailyProfit.push(pf);
+                cumulativeProfit += pf;
+                sums[i] += Q;
+            }
+            const submittedOrders = orders.filter((x) => typeof x === "number");
+            const avgOrder = submittedOrders.length ? submittedOrders.reduce((a, b) => a + b, 0) / submittedOrders.length : 0;
+            lbRows.push({
+                uid: pdoc.id,
+                name: String(p.name ?? "Anonymous"),
+                profit: cumulativeProfit,
+                avgOrder,
+            });
+            tx.set(pdoc.ref, {
+                dailyProfit,
+                cumulativeProfit,
+                lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+        });
+        lbRows.sort((a, b) => b.profit - a.profit);
+        const nPlayers = playersSnap.docs.length || 1;
+        const endgameAvgOrderPerDay = sums.map((s) => s / nPlayers);
+        tx.update(sessionRef, {
+            status: "finished",
+            revealIndex: dayCount,
+            weekIndex: Math.max(0, weeks - 1),
+            revealedDemands: usedDemands,
+            leaderboard: lbRows.slice(0, 50),
+            endgameAvgOrderPerDay,
+        });
     });
     return { ok: true };
 });
