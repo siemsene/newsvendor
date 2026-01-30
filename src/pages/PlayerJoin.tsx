@@ -15,7 +15,7 @@ export function PlayerJoin() {
     setBusy(true);
     try {
       const res = await api.joinSession({ code: code.toUpperCase(), name: name.trim() });
-      nav(`/play/${res.data.sessionId}`);
+      nav(`/play/${res.data.sessionId}`, { state: { resumed: res.data.resumed } });
     } catch (e: any) {
       console.error(e);
       setMsg(e?.message ?? "Join failed");

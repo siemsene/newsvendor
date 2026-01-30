@@ -85,12 +85,18 @@ export function Host() {
   return (
     <div className="grid two">
       <div className="card">
-        <h2>Create a new session</h2>
-        <p>Set demand parameters and cost parameters. A unique demand dataset is generated per session.</p>
+        <div className="row" style={{ marginBottom: 12 }}>
+          <h2 style={{ margin: 0 }}>Create New Session</h2>
+          {role === "host" && <span className="badge success">Host Mode</span>}
+        </div>
+        <p className="small">Configure demand distribution and pricing parameters for the game.</p>
 
+        <div className="hr" />
+
+        <h3>Demand Distribution</h3>
         <div className="grid two">
           <div>
-            <label>Demand mean (μ)</label>
+            <label>Mean (μ)</label>
             <input
               type="number"
               value={params.demandMu}
@@ -98,7 +104,7 @@ export function Host() {
             />
           </div>
           <div>
-            <label>Demand std dev (σ)</label>
+            <label>Std Deviation (σ)</label>
             <input
               type="number"
               value={params.demandSigma}
@@ -107,24 +113,26 @@ export function Host() {
           </div>
         </div>
 
+        <h3 style={{ marginTop: 16 }}>Pricing</h3>
         <div className="grid three">
           <div>
-            <label>Sales price</label>
+            <label>Sales Price</label>
             <input type="number" step="0.01" value={params.price} onChange={(e) => setParams((p) => ({ ...p, price: Number(e.target.value) }))} />
           </div>
           <div>
-            <label>Purchase cost</label>
+            <label>Unit Cost</label>
             <input type="number" step="0.01" value={params.cost} onChange={(e) => setParams((p) => ({ ...p, cost: Number(e.target.value) }))} />
           </div>
           <div>
-            <label>Salvage value</label>
+            <label>Salvage Value</label>
             <input type="number" step="0.01" value={params.salvage} onChange={(e) => setParams((p) => ({ ...p, salvage: Number(e.target.value) }))} />
           </div>
         </div>
 
+        <h3 style={{ marginTop: 16 }}>Duration</h3>
         <div className="grid two">
           <div>
-            <label>Weeks in game</label>
+            <label>Weeks in Game</label>
             <input
               type="number"
               min={1}
@@ -134,67 +142,96 @@ export function Host() {
               onChange={(e) => setParams((p) => ({ ...p, weeks: Math.max(1, Math.min(52, Math.round(Number(e.target.value)))) }))}
             />
           </div>
+          <div>
+            <label>&nbsp;</label>
+            <div className="small" style={{ padding: "12px 0" }}>
+              = {params.weeks * 5} total days ({params.weeks} weeks × 5 days)
+            </div>
+          </div>
         </div>
 
-        <div className="row" style={{ marginTop: 12 }}>
-          <button className="btn" disabled={busy} onClick={createSession}>
-            Create session
+        <div className="hr" />
+
+        <div className="row">
+          <button className={`btn${busy ? " loading" : ""}`} disabled={busy || role !== "host"} onClick={createSession}>
+            Create Session
           </button>
-          <span className="small">{role === "host" ? "Host mode enabled." : "Not host yet."}</span>
+          {role !== "host" && <span className="small text-danger">Login as host first.</span>}
         </div>
 
         {created && (
           <>
             <div className="hr" />
-            <p>
-              Session created! Code: <span className="badge mono">{created.code}</span>
-            </p>
+            <div className="card success-highlight" style={{ marginTop: 8 }}>
+              <p style={{ margin: 0 }}>
+                Session created! Share this code with players:
+              </p>
+              <div className="session-code" style={{ marginTop: 12 }}>{created.code}</div>
+            </div>
           </>
         )}
 
         {msg && <div className="hr" />}
-        {msg && <p style={{ color: "#7a2d2d" }}>{msg}</p>}
+        {msg && <p className="text-danger">{msg}</p>}
       </div>
 
       <div className="card">
-        <h2>Your sessions</h2>
+        <div className="row" style={{ marginBottom: 8 }}>
+          <h2 style={{ margin: 0 }}>Your Sessions</h2>
+          <span className="badge">{sessions.length} active</span>
+        </div>
         <p className="small">Click to open the host control room.</p>
         <div className="hr" />
-        {listMsg && <p style={{ color: "#7a2d2d" }}>{listMsg}</p>}
+        {listMsg && <p className="text-danger">{listMsg}</p>}
         {sessions.length === 0 ? (
-          <p className="small">No sessions yet.</p>
+          <div style={{ textAlign: "center", padding: "30px 0" }}>
+            <p className="small">No active sessions. Create one to get started.</p>
+          </div>
         ) : (
           <div className="grid">
-            {sessions.map((s) => (
-              <div key={s.id} className="card" style={{ padding: 14, background: "rgba(255,255,255,0.75)" }}>
-                <div className="row">
-                  <div>
-                    <div style={{ fontWeight: 800 }}>Code: <span className="mono">{s.data.code}</span></div>
-                    <div className="small">Week: <span className="mono">{(s.data.weekIndex ?? 0) + 1}</span></div>
-                  </div>
-                  <div className="spacer" />
+            {sessions.map((s) => {
+              const statusConfig: { label: string; dotClass: string } = {
+                lobby: { label: "Lobby", dotClass: "pending" },
+                training: { label: "Training", dotClass: "pending" },
+                ordering: { label: "Ordering", dotClass: "active" },
+                revealing: { label: "Revealing", dotClass: "active" },
+                finished: { label: "Finished", dotClass: "finished" },
+              }[s.data.status] ?? { label: s.data.status, dotClass: "pending" };
+              return (
+                <div key={s.id} className="player-card">
                   <div className="row">
-                    <Link className="btn secondary" to={`/host/session/${s.id}`}>Open</Link>
-                    <button
-                      className="btn ghost"
-                      disabled={busy || s.data.status === "finished"}
-                      onClick={() => {
-                        if (confirm("End this session for all players?")) {
-                          endSession(s.id);
-                        }
-                      }}
-                    >
-                      End
-                    </button>
+                    <div style={{ flex: 1 }}>
+                      <div className="row" style={{ gap: 8, marginBottom: 4 }}>
+                        <span className="mono font-bold" style={{ fontSize: 16 }}>{s.data.code}</span>
+                        <span className={`status-dot ${statusConfig.dotClass}`} />
+                      </div>
+                      <div className="small">
+                        Week {(s.data.weekIndex ?? 0) + 1} of {s.data.weeks ?? 10} · {s.data.playersCount ?? 0} players
+                      </div>
+                    </div>
+                    <div className="row">
+                      <Link className="btn secondary" to={`/host/session/${s.id}`}>Open</Link>
+                      <button
+                        className="btn ghost"
+                        disabled={busy || s.data.status === "finished"}
+                        onClick={() => {
+                          if (confirm("End this session for all players?")) {
+                            endSession(s.id);
+                          }
+                        }}
+                      >
+                        End
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
         <div className="hr" />
         <p className="small">
-          Players join on Home with the session code.
+          Players join at the homepage using the session code.
         </p>
       </div>
     </div>

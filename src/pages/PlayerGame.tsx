@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useLocation } from "react-router-dom";
 import { db } from "../lib/firebase";
 import { doc, onSnapshot } from "firebase/firestore";
 import type { PlayerDoc, SessionPublic } from "../lib/types";
@@ -14,6 +14,7 @@ import { Toast } from "../components/Toast";
 
 export function PlayerGame() {
   const { sessionId } = useParams<{ sessionId: string }>();
+  const location = useLocation();
   const { user } = useAuthState();
   const [session, setSession] = useState<SessionPublic | null>(null);
   const [player, setPlayer] = useState<PlayerDoc | null>(null);
@@ -22,10 +23,12 @@ export function PlayerGame() {
   const [msg, setMsg] = useState("");
   const [inputError, setInputError] = useState("");
   const [showNudge, setShowNudge] = useState(false);
+  const [showResumed, setShowResumed] = useState(false);
   const [showOutlierModal, setShowOutlierModal] = useState(false);
   const [pendingQty, setPendingQty] = useState<number | null>(null);
   const lastNudgeRef = useRef<number | null>(null);
   const nudgeTimerRef = useRef<number | null>(null);
+  const resumedTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -69,9 +72,20 @@ export function PlayerGame() {
   useEffect(() => {
     return () => {
       if (nudgeTimerRef.current) window.clearTimeout(nudgeTimerRef.current);
+      if (resumedTimerRef.current) window.clearTimeout(resumedTimerRef.current);
     };
   }, []);
 
+  // Show "welcome back" toast if player resumed their session
+  useEffect(() => {
+    const state = location.state as { resumed?: boolean } | null;
+    if (state?.resumed) {
+      setShowResumed(true);
+      resumedTimerRef.current = window.setTimeout(() => setShowResumed(false), 4000);
+      // Clear the state so it doesn't show again on refresh
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
 
   const training = session?.trainingDemands ?? [];
   const revealed = session?.revealedDemands ?? [];
@@ -155,22 +169,32 @@ export function PlayerGame() {
     );
   }
 
+  const profit = player.cumulativeProfit ?? 0;
+
   return (
     <div className="grid">
-      <div className="card">
-        <h2>
-          Session: <span className="badge mono">{session.code}</span>
-        </h2>
-        <p className="small">
-          You run a croissant bakery. Each week, choose how many croissants to bake per day (Mon–Fri).
-          Unsold croissants salvage at <span className="mono">{session.salvage.toFixed(2)}</span>.
-        </p>
-        <p className="small">
-          Player: <span className="mono">{player.name}</span>
-        </p>
+      <div className="card highlight">
+        <div className="row" style={{ marginBottom: 12 }}>
+          <div>
+            <div className="row" style={{ gap: 10, marginBottom: 4 }}>
+              <h2 style={{ margin: 0 }}>Welcome, {player.name}</h2>
+              <span className="badge large mono">{session.code}</span>
+            </div>
+            <p className="small" style={{ margin: 0 }}>
+              You run a croissant bakery. Each week, decide how many croissants to bake per day (Mon–Fri).
+            </p>
+          </div>
+          <div className="spacer" />
+          <div style={{ textAlign: "right" }}>
+            <div className="small">Your Profit</div>
+            <div className={`mono font-bold ${profit >= 0 ? "text-success" : "text-danger"}`} style={{ fontSize: 24 }}>
+              {profit >= 0 ? "+" : ""}{profit.toFixed(2)}
+            </div>
+          </div>
+        </div>
         <div className="kpi">
-          <div className="pill">
-            Price: <span className="mono">{session.price.toFixed(2)}</span>
+          <div className="pill accent">
+            Sell Price: <span className="mono">{session.price.toFixed(2)}</span>
           </div>
           <div className="pill">
             Cost: <span className="mono">{session.cost.toFixed(2)}</span>
@@ -178,6 +202,11 @@ export function PlayerGame() {
           <div className="pill">
             Salvage: <span className="mono">{session.salvage.toFixed(2)}</span>
           </div>
+          {rank && (
+            <div className="pill success">
+              Rank: <span className="mono">#{rank}</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -194,23 +223,26 @@ export function PlayerGame() {
       </div>
 
       {session.status === "finished" ? (
-        <div className="card">
-          <h2>Game ended</h2>
-          <p className="small">This session has ended. Thanks for playing!</p>
-          <div className="kpi" style={{ marginTop: 10 }}>
-            <div className="pill">
-              Your rank: <span className="mono">{rank ?? "—"}</span>
+        <div className="card success-highlight">
+          <h2>Game Complete!</h2>
+          <p>Congratulations on completing the Newsvendor simulation. Here are your final results:</p>
+          <div className="kpi" style={{ marginTop: 16 }}>
+            <div className="pill success">
+              Final Rank: <span className="mono font-bold">#{rank ?? "—"}</span>
             </div>
-            <div className="pill">
-              Total profit: <span className="mono">{(player.cumulativeProfit ?? 0).toFixed(2)}</span>
+            <div className="pill accent">
+              Total Profit: <span className="mono font-bold">{(player.cumulativeProfit ?? 0).toFixed(2)}</span>
             </div>
           </div>
         </div>
       ) : (
         <div className="card">
-          <h2>Weekly bake plan</h2>
+          <div className="row" style={{ marginBottom: 8 }}>
+            <h2 style={{ margin: 0 }}>Weekly Bake Plan</h2>
+            <span className="badge">Week {weekIndex + 1}/{weeks}</span>
+          </div>
           <p className="small">
-            Week {weekIndex + 1}/{weeks} - one quantity applies to every day this week. How many croissants will you bake per day this week?
+            Choose one quantity that applies to every day this week (Mon–Fri). How many croissants will you bake per day?
           </p>
           <div className="row" style={{ marginTop: 10 }}>
             <input
@@ -264,6 +296,7 @@ export function PlayerGame() {
       )}
 
       <Toast message="Host nudge: please make your decision now." show={showNudge} tone="alert" />
+      <Toast message="Welcome back! Your progress has been restored." show={showResumed} tone="success" />
 
       {showOutlierModal && (
         <div className="modal-backdrop" role="dialog" aria-modal="true">

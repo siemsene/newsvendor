@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.cleanupOldSessions = exports.kickPlayer = exports.endSession = exports.redrawSession = exports.startSession = exports.advanceReveal = exports.nudgePlayer = exports.submitOrder = exports.joinSession = exports.createSession = exports.hostLogin = void 0;
+exports.cleanupOldSessions = exports.kickPlayer = exports.finishWeek = exports.endSession = exports.redrawSession = exports.startSession = exports.advanceReveal = exports.nudgePlayer = exports.submitOrder = exports.joinSession = exports.createSession = exports.hostLogin = void 0;
 const admin = __importStar(require("firebase-admin"));
 const https_1 = require("firebase-functions/v2/https");
 const v2_1 = require("firebase-functions/v2");
@@ -182,6 +182,7 @@ exports.joinSession = (0, https_1.onCall)(async (request) => {
     const sessionId = sessionDoc.id;
     const sessionRef = db.collection("sessions").doc(sessionId);
     const playerRef = sessionRef.collection("players").doc(uid);
+    let resumed = false;
     await db.runTransaction(async (tx) => {
         const sessionSnap = await tx.get(sessionRef);
         if (!sessionSnap.exists)
@@ -189,7 +190,44 @@ exports.joinSession = (0, https_1.onCall)(async (request) => {
         const session = sessionSnap.data();
         const weeks = Math.round(Number(session?.weeks ?? 10));
         const playerSnap = await tx.get(playerRef);
-        if (!playerSnap.exists) {
+        // Check if this UID already has a player doc
+        if (playerSnap.exists) {
+            // Same UID rejoining - just update activity
+            tx.set(playerRef, {
+                name,
+                isActive: true,
+                lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+            resumed = true;
+            return;
+        }
+        // Check if there's an existing player with the same name (case-insensitive)
+        const playersSnap = await tx.get(sessionRef.collection("players"));
+        const nameLower = name.toLowerCase();
+        const existingPlayer = playersSnap.docs.find((doc) => String(doc.data().name ?? "").toLowerCase() === nameLower);
+        if (existingPlayer && existingPlayer.id !== uid) {
+            // Found existing player with same name but different UID - transfer their data
+            const oldData = existingPlayer.data();
+            const oldRef = existingPlayer.ref;
+            // Create new player doc with the old data but new UID
+            tx.create(playerRef, {
+                name: oldData.name ?? name,
+                joinedAt: oldData.joinedAt ?? admin.firestore.FieldValue.serverTimestamp(),
+                isActive: true,
+                ordersByWeek: oldData.ordersByWeek ?? Array.from({ length: Math.max(1, weeks) }, () => null),
+                dailyProfit: oldData.dailyProfit ?? [],
+                cumulativeProfit: oldData.cumulativeProfit ?? 0,
+                submittedWeek: oldData.submittedWeek ?? null,
+                lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+                lastNudgedAt: oldData.lastNudgedAt ?? null,
+            });
+            // Delete the old player doc
+            tx.delete(oldRef);
+            // Note: playersCount stays the same since we're transferring, not adding
+            resumed = true;
+        }
+        else {
+            // New player - create fresh record
             tx.create(playerRef, {
                 name,
                 joinedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -203,15 +241,8 @@ exports.joinSession = (0, https_1.onCall)(async (request) => {
             });
             tx.update(sessionRef, { playersCount: admin.firestore.FieldValue.increment(1) });
         }
-        else {
-            tx.set(playerRef, {
-                name,
-                isActive: true,
-                lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
-            }, { merge: true });
-        }
     });
-    return { sessionId };
+    return { sessionId, resumed };
 });
 exports.submitOrder = (0, https_1.onCall)(async (request) => {
     const uid = requireAuth(request);
@@ -277,6 +308,8 @@ exports.advanceReveal = (0, https_1.onCall)(async (request) => {
     const sessionRef = db.collection("sessions").doc(sessionId);
     const privateRef = sessionRef.collection("private").doc("demand");
     let nextReveal = 0;
+    // Collect player updates to batch write outside transaction
+    const playerUpdates = [];
     await db.runTransaction(async (tx) => {
         const sessionSnap = await tx.get(sessionRef);
         if (!sessionSnap.exists)
@@ -304,6 +337,7 @@ exports.advanceReveal = (0, https_1.onCall)(async (request) => {
         const cost = Number(session.cost ?? 0.2);
         const salvage = Number(session.salvage ?? 0);
         const lbRows = [];
+        // Calculate updates but don't write yet
         playersSnap.docs.forEach((pdoc) => {
             const p = pdoc.data();
             const baseOrders = Array.isArray(p.ordersByWeek) ? p.ordersByWeek : [];
@@ -313,11 +347,8 @@ exports.advanceReveal = (0, https_1.onCall)(async (request) => {
             const dailyProfit = Array.isArray(p.dailyProfit) ? p.dailyProfit.slice() : [];
             dailyProfit.push(pf);
             const cumulativeProfit = Number(p.cumulativeProfit ?? 0) + pf;
-            tx.set(pdoc.ref, {
-                dailyProfit,
-                cumulativeProfit,
-                lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
-            }, { merge: true });
+            // Queue for batch write outside transaction
+            playerUpdates.push({ ref: pdoc.ref, dailyProfit, cumulativeProfit });
             const submittedOrders = orders.filter((x) => typeof x === "number");
             const avgOrder = submittedOrders.length ? submittedOrders.reduce((a, b) => a + b, 0) / submittedOrders.length : 0;
             lbRows.push({
@@ -368,6 +399,20 @@ exports.advanceReveal = (0, https_1.onCall)(async (request) => {
         }
         tx.update(sessionRef, updatePayload);
     });
+    // Batch write player updates outside transaction (up to 500 per batch)
+    const BATCH_SIZE = 500;
+    for (let i = 0; i < playerUpdates.length; i += BATCH_SIZE) {
+        const batch = db.batch();
+        const chunk = playerUpdates.slice(i, i + BATCH_SIZE);
+        for (const { ref, dailyProfit, cumulativeProfit } of chunk) {
+            batch.set(ref, {
+                dailyProfit,
+                cumulativeProfit,
+                lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+        }
+        await batch.commit();
+    }
     return { ok: true, revealIndex: nextReveal };
 });
 exports.startSession = (0, https_1.onCall)(async (request) => {
@@ -443,6 +488,8 @@ exports.endSession = (0, https_1.onCall)(async (request) => {
         throw new https_1.HttpsError("invalid-argument", "Missing sessionId.");
     const sessionRef = db.collection("sessions").doc(sessionId);
     const privateRef = sessionRef.collection("private").doc("demand");
+    // Collect player updates to batch write outside transaction
+    const playerUpdates = [];
     await db.runTransaction(async (tx) => {
         const sessionSnap = await tx.get(sessionRef);
         if (!sessionSnap.exists)
@@ -467,6 +514,7 @@ exports.endSession = (0, https_1.onCall)(async (request) => {
         const playersSnap = await tx.get(sessionRef.collection("players"));
         const lbRows = [];
         const sums = Array.from({ length: dayCount }, () => 0);
+        // Calculate updates but don't write yet
         playersSnap.docs.forEach((pdoc) => {
             const p = pdoc.data();
             const baseOrders = Array.isArray(p.ordersByWeek) ? p.ordersByWeek : [];
@@ -492,11 +540,8 @@ exports.endSession = (0, https_1.onCall)(async (request) => {
                 profit: cumulativeProfit,
                 avgOrder,
             });
-            tx.set(pdoc.ref, {
-                dailyProfit,
-                cumulativeProfit,
-                lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
-            }, { merge: true });
+            // Queue for batch write outside transaction
+            playerUpdates.push({ ref: pdoc.ref, dailyProfit, cumulativeProfit });
         });
         lbRows.sort((a, b) => b.profit - a.profit);
         const nPlayers = playersSnap.docs.length || 1;
@@ -510,7 +555,77 @@ exports.endSession = (0, https_1.onCall)(async (request) => {
             endgameAvgOrderPerDay,
         });
     });
+    // Batch write player updates outside transaction (up to 500 per batch)
+    const BATCH_SIZE = 500;
+    for (let i = 0; i < playerUpdates.length; i += BATCH_SIZE) {
+        const batch = db.batch();
+        const chunk = playerUpdates.slice(i, i + BATCH_SIZE);
+        for (const { ref, dailyProfit, cumulativeProfit } of chunk) {
+            batch.set(ref, {
+                dailyProfit,
+                cumulativeProfit,
+                lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+        }
+        await batch.commit();
+    }
     return { ok: true };
+});
+exports.finishWeek = (0, https_1.onCall)(async (request) => {
+    await (0, auth_1.assertHost)(request);
+    const sessionId = String(request.data?.sessionId ?? "");
+    if (!sessionId)
+        throw new https_1.HttpsError("invalid-argument", "Missing sessionId.");
+    const sessionRef = db.collection("sessions").doc(sessionId);
+    const sessionSnap = await sessionRef.get();
+    if (!sessionSnap.exists)
+        throw new https_1.HttpsError("not-found", "Session not found.");
+    const session = sessionSnap.data();
+    const status = session.status;
+    if (status !== "ordering" && status !== "training") {
+        throw new https_1.HttpsError("failed-precondition", "Cannot finish week during revealing or after game ended.");
+    }
+    const weekIndex = Number(session.weekIndex ?? 0);
+    const weeks = Math.round(Number(session.weeks ?? 10));
+    const demandMu = Math.round(Number(session.demandMu ?? 50));
+    // Get all players
+    const playersSnap = await sessionRef.collection("players").get();
+    // Find players who haven't submitted for this week
+    const playersToUpdate = [];
+    playersSnap.docs.forEach((pdoc) => {
+        const p = pdoc.data();
+        const baseOrders = Array.isArray(p.ordersByWeek) ? p.ordersByWeek : [];
+        const orders = baseOrders.length === weeks
+            ? [...baseOrders]
+            : Array.from({ length: weeks }, (_, i) => baseOrders[i] ?? null);
+        // Check if this player hasn't submitted for the current week
+        if (orders[weekIndex] === null || orders[weekIndex] === undefined) {
+            orders[weekIndex] = demandMu;
+            playersToUpdate.push({ ref: pdoc.ref, orders });
+        }
+    });
+    if (playersToUpdate.length === 0) {
+        return { ok: true, updated: 0, message: "All players have already submitted." };
+    }
+    // Batch update players who haven't submitted
+    const BATCH_SIZE = 500;
+    for (let i = 0; i < playersToUpdate.length; i += BATCH_SIZE) {
+        const batch = db.batch();
+        const chunk = playersToUpdate.slice(i, i + BATCH_SIZE);
+        for (const { ref, orders } of chunk) {
+            batch.set(ref, {
+                ordersByWeek: orders,
+                submittedWeek: weekIndex,
+                lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+        }
+        await batch.commit();
+    }
+    // If session was in training status, move to ordering
+    if (status === "training") {
+        await sessionRef.update({ status: "ordering" });
+    }
+    return { ok: true, updated: playersToUpdate.length, defaultOrder: demandMu };
 });
 exports.kickPlayer = (0, https_1.onCall)(async (request) => {
     await (0, auth_1.assertHost)(request);

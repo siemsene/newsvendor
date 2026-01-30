@@ -86,30 +86,28 @@ export function RevealTheatre({
           const isRevealed = typeof d === "number";
           const isHigh = isRevealed && d > meanHat + stdHat;
           const isLow = isRevealed && d < meanHat - stdHat;
+          const cardClass = `day-card${isRevealed ? " revealed" : ""}${isHigh ? " high-demand" : ""}${isLow ? " low-demand" : ""}`;
+          const profitValue = entry?.profit ?? 0;
+          const profitColor = profitValue > 0 ? "var(--success)" : profitValue < 0 ? "var(--danger)" : "inherit";
           return (
             <motion.div
               key={i}
-              className="card"
-              style={{ padding: 14, background: "rgba(255,255,255,0.75)" }}
-              initial={{ opacity: 0.6, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.2 }}
+              className={cardClass}
+              initial={{ opacity: 0.6, y: 8, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              transition={{ duration: 0.25, delay: i * 0.05 }}
             >
-              <div className="mono" style={{ fontSize: 12, color: "rgba(43,42,40,0.7)" }}>
-                {DOW[i]}
-              </div>
-              <div style={{ fontSize: 26, fontWeight: 800, marginTop: 8 }}>
+              <div className="day-label">{DOW[i]}</div>
+              <div className={`demand-value${!isRevealed ? " unrevealed" : ""}`}>
                 {isRevealed ? d : "?"}{" "}
                 {isHigh ? "☀️" : isLow ? "🌧️" : ""}
               </div>
               <div className="small">demand</div>
 
-              <div className="hr" />
-
-              <div className="row" style={{ justifyContent: "space-between" }}>
+              <div className="profit-row">
                 <div className="small">profit</div>
-                <div className="mono" style={{ fontWeight: 800 }}>
-                  {isRevealed ? entry?.profit.toFixed(2) : "—"}
+                <div className="mono" style={{ fontWeight: 700, color: isRevealed ? profitColor : "inherit" }}>
+                  {isRevealed ? (profitValue >= 0 ? "+" : "") + profitValue.toFixed(2) : "—"}
                 </div>
               </div>
             </motion.div>

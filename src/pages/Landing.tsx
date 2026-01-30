@@ -47,51 +47,84 @@ export function Landing() {
 
   return (
     <div
-      className="grid two"
       style={{
         backgroundImage: `url(${dragons})`,
         backgroundSize: "cover",
         backgroundPosition: "center",
         backgroundRepeat: "no-repeat",
-        minHeight: "100vh",
-        padding: 16,
-        borderRadius: 16,
+        minHeight: "calc(100vh - 100px)",
+        padding: 20,
+        borderRadius: 20,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
       }}
     >
-      <div className="card" style={{ background: "rgba(255,255,255,0.7)", maxWidth: 420 }}>
-        <h2>Join a session (players)</h2>
-        <p>Enter the session code from the host and choose your baker name.</p>
+      <div className="grid two" style={{ maxWidth: 900, width: "100%" }}>
+        <div className="card" style={{ background: "rgba(255,255,255,0.92)", backdropFilter: "blur(10px)" }}>
+          <div className="row" style={{ marginBottom: 8 }}>
+            <h2 style={{ margin: 0 }}>Join a Session</h2>
+            <span className="badge">Players</span>
+          </div>
+          <p>Enter the session code from your instructor and choose a baker name.</p>
 
-        <label>Session code</label>
-        <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g., ABCD12" />
+          <label>Session code</label>
+          <input
+            value={code}
+            onChange={(e) => setCode(e.target.value.toUpperCase())}
+            placeholder="e.g., ABCD12"
+            style={{ fontFamily: "var(--mono)", letterSpacing: "1px", fontSize: 16 }}
+          />
 
-        <label>Your name</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g., Alex" />
+          <label>Your name</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g., Alex" />
 
-        <div className="row" style={{ marginTop: 12 }}>
-          <button className="btn" disabled={busy || !code.trim() || !name.trim()} onClick={join}>
-            Join bakery 🥐
-          </button>
+          <div className="row" style={{ marginTop: 16 }}>
+            <button
+              className={`btn${busy ? " loading" : ""}`}
+              disabled={busy || !code.trim() || !name.trim()}
+              onClick={join}
+            >
+              Join Bakery
+            </button>
+          </div>
+
+          {msg && <div className="hr" />}
+          {msg && <p className="text-danger">{msg}</p>}
         </div>
 
-        {msg && <div className="hr" />}
-        {msg && <p style={{ color: "#7a2d2d" }}>{msg}</p>}
-      </div>
+        <div className="card" style={{ background: "rgba(255,255,255,0.88)", backdropFilter: "blur(10px)" }}>
+          <div className="row" style={{ marginBottom: 8 }}>
+            <h2 style={{ margin: 0 }}>Host Login</h2>
+            <span className="badge warning">Instructors</span>
+          </div>
+          <p>Create sessions, configure parameters, and run the reveal theatre.</p>
 
+          <label>Host password</label>
+          <input
+            type="password"
+            value={hostPw}
+            onChange={(e) => setHostPw(e.target.value)}
+            placeholder="Enter password"
+          />
 
-      <div className="card" style={{ background: "rgba(255,255,255,0.7)", maxWidth: 420 }}>
-        <h2>Host login</h2>
-        <p>Hosts can create sessions, set parameters, and run the reveal theatre.</p>
+          <div className="row" style={{ marginTop: 16 }}>
+            <button
+              className={`btn secondary${busy ? " loading" : ""}`}
+              disabled={busy || !hostPw.trim()}
+              onClick={hostLogin}
+            >
+              Enter Kitchen
+            </button>
+          </div>
 
-        <label>Host password</label>
-        <input type="password" value={hostPw} onChange={(e) => setHostPw(e.target.value)} />
-
-        <div className="row" style={{ marginTop: 12 }}>
-          <button className="btn" disabled={busy || !hostPw.trim()} onClick={hostLogin}>
-            Enter kitchen 👩‍🍳
-          </button>
+          {role === "host" && (
+            <>
+              <div className="hr" />
+              <p className="text-success small">You're already logged in as host.</p>
+            </>
+          )}
         </div>
-
       </div>
     </div>
   );

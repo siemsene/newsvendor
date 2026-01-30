@@ -33,6 +33,7 @@ export type SessionPublic = {
   drawFailed?: boolean;
   leaderboard?: LeaderboardRow[];
   endgameAvgOrderPerDay?: number[];
+  playersCount?: number;
 };
 
 export type PlayerDoc = {

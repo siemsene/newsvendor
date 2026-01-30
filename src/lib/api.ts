@@ -7,7 +7,7 @@ export const api = {
     { demandMu: number; demandSigma: number; price: number; cost: number; salvage: number; weeks: number },
     { sessionId: string; code: string }
   >(functions, "createSession"),
-  joinSession: httpsCallable<{ code: string; name: string }, { sessionId: string }>(functions, "joinSession"),
+  joinSession: httpsCallable<{ code: string; name: string }, { sessionId: string; resumed?: boolean }>(functions, "joinSession"),
   submitOrder: httpsCallable<{ sessionId: string; weekIndex: number; orderQty: number }, { ok: boolean }>(functions, "submitOrder"),
   advanceReveal: httpsCallable<{ sessionId: string }, { ok: boolean; revealIndex: number }>(functions, "advanceReveal"),
   nudgePlayer: httpsCallable<{ sessionId: string; uid: string }, { ok: boolean }>(functions, "nudgePlayer"),
@@ -15,4 +15,5 @@ export const api = {
   startSession: httpsCallable<{ sessionId: string }, { ok: boolean }>(functions, "startSession"),
   kickPlayer: httpsCallable<{ sessionId: string; uid: string }, { ok: boolean }>(functions, "kickPlayer"),
   redrawSession: httpsCallable<{ sessionId: string }, { ok: boolean }>(functions, "redrawSession"),
+  finishWeek: httpsCallable<{ sessionId: string }, { ok: boolean; updated: number; defaultOrder?: number; message?: string }>(functions, "finishWeek"),
 };

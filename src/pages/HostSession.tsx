@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { db } from "../lib/firebase";
 import { collection, doc, onSnapshot, updateDoc } from "firebase/firestore";
@@ -9,6 +9,8 @@ import { Leaderboard } from "../components/Leaderboard";
 import { EndgameCharts } from "../components/EndgameCharts";
 import { Bar, ComposedChart, LineChart, Line, ReferenceDot, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
+const PLAYERS_PER_PAGE = 25;
+
 export function HostSession() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const [session, setSession] = useState<SessionPublic | null>(null);
@@ -17,9 +19,11 @@ export function HostSession() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [autoMsg, setAutoMsg] = useState("");
+  const [playerPage, setPlayerPage] = useState(0);
   const sessionRef = useRef<SessionPublic | null>(null);
   const autoRevealRef = useRef(false);
   const autoTimerRef = useRef<number | null>(null);
+  const playersMapRef = useRef<Map<string, PlayerDoc>>(new Map());
 
   useEffect(() => {
     if (!sessionId) return;
@@ -28,13 +32,26 @@ export function HostSession() {
       setSession(data);
       sessionRef.current = data;
     });
+    // Use incremental updates with Map for better performance with many players
     const unsubP = onSnapshot(collection(db, "sessions", sessionId, "players"), (snap) => {
-      const rows = snap.docs.map((d) => ({ uid: d.id, ...(d.data() as any) })) as any;
-      setPlayers(rows);
+      const map = playersMapRef.current;
+      snap.docChanges().forEach((change) => {
+        const uid = change.doc.id;
+        if (change.type === "removed") {
+          map.delete(uid);
+        } else {
+          map.set(uid, { uid, ...(change.doc.data() as any) } as PlayerDoc);
+        }
+      });
+      // Only create new array when changes occur
+      if (snap.docChanges().length > 0) {
+        setPlayers(Array.from(map.values()));
+      }
     });
     return () => {
       unsubS();
       unsubP();
+      playersMapRef.current.clear();
     };
   }, [sessionId]);
 
@@ -54,6 +71,20 @@ export function HostSession() {
   const submitted = useMemo(() => {
     return players.filter((p) => (p.ordersByWeek?.[weekIndex] ?? null) !== null);
   }, [players, weekIndex]);
+
+  // Pagination for players
+  const totalPages = Math.max(1, Math.ceil(players.length / PLAYERS_PER_PAGE));
+  const paginatedPlayers = useMemo(() => {
+    const start = playerPage * PLAYERS_PER_PAGE;
+    return players.slice(start, start + PLAYERS_PER_PAGE);
+  }, [players, playerPage]);
+
+  // Reset page if it becomes invalid
+  useEffect(() => {
+    if (playerPage >= totalPages && totalPages > 0) {
+      setPlayerPage(totalPages - 1);
+    }
+  }, [playerPage, totalPages]);
 
   const allSubmitted = players.length > 0 && submitted.length === players.length;
   const showLeaderboard = session?.showLeaderboard === true;
@@ -251,6 +282,28 @@ export function HostSession() {
     }
   }
 
+  async function finishWeek() {
+    if (!sessionId || !session) return;
+    const notSubmitted = players.length - submitted.length;
+    const defaultQ = Math.round(session.demandMu ?? 50);
+    if (!confirm(`Auto-submit order of ${defaultQ} (mean demand) for ${notSubmitted} player(s) who haven't submitted?`)) return;
+    setMsg("");
+    setBusy(true);
+    try {
+      const res = await api.finishWeek({ sessionId });
+      if (res.data.updated > 0) {
+        setMsg(`Auto-submitted order of ${res.data.defaultOrder} for ${res.data.updated} player(s).`);
+      } else {
+        setMsg(res.data.message ?? "All players have already submitted.");
+      }
+    } catch (e: any) {
+      console.error(e);
+      setMsg(e?.message ?? "Finish week failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function toggleLeaderboard(next: boolean) {
     if (!sessionId) return;
     setMsg("");
@@ -336,29 +389,50 @@ export function HostSession() {
   }
 
 
+  const statusConfig: { label: string; dotClass: string; badgeClass: string } = {
+    lobby: { label: "Lobby", dotClass: "pending", badgeClass: "warning" },
+    training: { label: "Training", dotClass: "pending", badgeClass: "warning" },
+    ordering: { label: "Ordering", dotClass: "active", badgeClass: "success" },
+    revealing: { label: "Revealing", dotClass: "active", badgeClass: "success" },
+    finished: { label: "Finished", dotClass: "finished", badgeClass: "" },
+  }[session.status] ?? { label: session.status, dotClass: "pending", badgeClass: "" };
+
   return (
     <div className="grid">
       <div className="card">
-        <h2>Host control room</h2>
-        <p className="small">
-          Session code: <span className="badge mono">{session.code}</span> · Status:{" "}
-          <span className="mono">{session.status}</span>
-        </p>
+        <div className="row" style={{ marginBottom: 12 }}>
+          <h2 style={{ margin: 0 }}>Host Control Room</h2>
+          <div className="spacer" />
+          <div className="row" style={{ gap: 6 }}>
+            <span className={`status-dot ${statusConfig.dotClass}`} />
+            <span className={`badge ${statusConfig.badgeClass}`}>{statusConfig.label}</span>
+          </div>
+        </div>
+
+        <div className="row" style={{ gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <div className="small" style={{ marginBottom: 4 }}>Session Code</div>
+            <div className="session-code">{session.code}</div>
+          </div>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div className="small" style={{ marginBottom: 4 }}>Progress</div>
+            <div className="progress-bar">
+              <div className="fill" style={{ width: `${(session.revealIndex / totalDays) * 100}%` }} />
+            </div>
+            <div className="small">
+              Week {weekIndex + 1} of {weeks} · Day {session.revealIndex} of {totalDays}
+            </div>
+          </div>
+        </div>
 
         {session.drawFailed && (
-          <p className="small" style={{ color: "#7a2d2d" }}>
+          <p className="small" style={{ color: "var(--danger)", marginTop: 12 }}>
             Feasible dataset not drawn in this attempt - please hit the redraw button.
           </p>
         )}
 
-        <div className="kpi" style={{ marginTop: 10 }}>
-          <div className="pill">
-            Week: <span className="mono">{weekIndex + 1}/{weeks}</span>
-          </div>
-          <div className="pill">
-            Revealed days: <span className="mono">{session.revealIndex}/{totalDays}</span>
-          </div>
-          <div className="pill">
+        <div className="kpi" style={{ marginTop: 16 }}>
+          <div className="pill accent">
             Optimal Q*: <span className="mono">{session.optimalQ}</span>
           </div>
           {bestInGame && (
@@ -366,6 +440,9 @@ export function HostSession() {
               Best in-game Q: <span className="mono">{bestInGame.q}</span>
             </div>
           )}
+          <div className="pill">
+            Players: <span className="mono">{players.length}</span>
+          </div>
         </div>
 
         <div className="hr" />
@@ -381,10 +458,17 @@ export function HostSession() {
               </button>
             </>
           ) : (
-            <span className="small">
-              Submitted this week: <span className="mono">{submitted.length}/{players.length}</span>{" "}
-              {allSubmitted ? "All in. Auto-reveal will run." : ""}
-            </span>
+            <>
+              <span className="small">
+                Submitted this week: <span className="mono">{submitted.length}/{players.length}</span>{" "}
+                {allSubmitted ? "All in. Auto-reveal will run." : ""}
+              </span>
+              {!allSubmitted && session.status === "ordering" && (
+                <button className="btn" disabled={busy} onClick={finishWeek}>
+                  Finish week
+                </button>
+              )}
+            </>
           )}
           {session.status !== "finished" && (
             <button className="btn secondary" disabled={busy} onClick={endEarly}>
@@ -477,54 +561,90 @@ export function HostSession() {
 
       <div className="card">
         <h2>Player matrix</h2>
-        <p className="small">Track weekly submissions, nudge laggards, or remove players.</p>
+        <p className="small">
+          Track weekly submissions, nudge laggards, or remove players.
+          {players.length > PLAYERS_PER_PAGE && (
+            <> Showing {playerPage * PLAYERS_PER_PAGE + 1}-{Math.min((playerPage + 1) * PLAYERS_PER_PAGE, players.length)} of {players.length} players.</>
+          )}
+        </p>
         <div className="hr" />
         {players.length === 0 ? (
           <p className="small">No players yet.</p>
         ) : (
-          <div className="grid">
-            {players.map((p) => {
-              const has = (p.ordersByWeek?.[weekIndex] ?? null) !== null;
-              return (
-                <div
-                  key={p.uid}
-                  className="card"
-                  style={{ padding: 14, background: "rgba(255,255,255,0.75)" }}
-                >
-                  <div className="row">
-                    <div>
-                      <div style={{ fontWeight: 800 }}>{p.name}</div>
-                      <div className="small">
-                        Week {weekIndex + 1} order:{" "}
-                        <span className="mono">{has ? p.ordersByWeek?.[weekIndex] : "-"}</span>
-                        {" - "}
-                        Submitted: <span className="mono">{has ? "yes" : "no"}</span>
-                        {" - "}
-                        Profit: <span className="mono">{(p.cumulativeProfit ?? 0).toFixed(2)}</span>
+          <>
+            <div className="grid">
+              {paginatedPlayers.map((p) => {
+                const has = (p.ordersByWeek?.[weekIndex] ?? null) !== null;
+                const profit = p.cumulativeProfit ?? 0;
+                return (
+                  <div
+                    key={p.uid}
+                    className={`player-card ${has ? "submitted" : "pending"}`}
+                  >
+                    <div className="row">
+                      <div style={{ flex: 1 }}>
+                        <div className="row" style={{ gap: 8, marginBottom: 4 }}>
+                          <span style={{ fontWeight: 700, fontSize: 15 }}>{p.name}</span>
+                          {has ? (
+                            <span className="badge success" style={{ fontSize: 10, padding: "3px 8px" }}>Submitted</span>
+                          ) : (
+                            <span className="badge warning" style={{ fontSize: 10, padding: "3px 8px" }}>Pending</span>
+                          )}
+                        </div>
+                        <div className="small" style={{ display: "flex", gap: 16 }}>
+                          <span>
+                            Order: <span className="mono font-bold">{has ? p.ordersByWeek?.[weekIndex] : "—"}</span>
+                          </span>
+                          <span>
+                            Profit: <span className={`mono font-bold ${profit >= 0 ? "text-success" : "text-danger"}`}>
+                              {profit >= 0 ? "+" : ""}{profit.toFixed(2)}
+                            </span>
+                          </span>
+                        </div>
+                      </div>
+                      <div className="row">
+                        <button className="btn ghost" disabled={busy || has} onClick={() => nudge(p.uid)}>
+                          Nudge
+                        </button>
+                        <button
+                          className="btn ghost"
+                          disabled={busy}
+                          onClick={() => {
+                            if (confirm(`Kick ${p.name}?`)) {
+                              kick(p.uid);
+                            }
+                          }}
+                        >
+                          Kick
+                        </button>
                       </div>
                     </div>
-                    <div className="spacer" />
-                    <div className="row">
-                      <button className="btn ghost" disabled={busy || has} onClick={() => nudge(p.uid)}>
-                        Nudge {'>'}
-                      </button>
-                      <button
-                        className="btn ghost"
-                        disabled={busy}
-                        onClick={() => {
-                          if (confirm(`Kick ${p.name}?`)) {
-                            kick(p.uid);
-                          }
-                        }}
-                      >
-                        Kick x
-                      </button>
-                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+            {totalPages > 1 && (
+              <div className="row" style={{ marginTop: 16, justifyContent: "center", gap: 8 }}>
+                <button
+                  className="btn ghost"
+                  disabled={playerPage === 0}
+                  onClick={() => setPlayerPage((p) => Math.max(0, p - 1))}
+                >
+                  Previous
+                </button>
+                <span className="small mono" style={{ padding: "8px 12px" }}>
+                  Page {playerPage + 1} / {totalPages}
+                </span>
+                <button
+                  className="btn ghost"
+                  disabled={playerPage >= totalPages - 1}
+                  onClick={() => setPlayerPage((p) => Math.min(totalPages - 1, p + 1))}
+                >
+                  Next
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
 
