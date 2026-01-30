@@ -31,7 +31,7 @@ export function RevealTheatre({
       const day = revealIndex - 1;
       const week = Math.floor(day / 5) + 1;
       const dow = DOW[day % 5];
-      setToast(`🥐 Oven doors open… Week ${week} · ${dow} demand revealed!`);
+      setToast(`🥐 Bakery doors open… Week ${week} · ${dow} demand revealed!`);
       setShowToast(true);
       const t = setTimeout(() => setShowToast(false), 2200);
       return () => clearTimeout(t);
@@ -60,26 +60,26 @@ export function RevealTheatre({
 
   return (
     <div className="card">
-      <h2>Revealed Demand</h2>
-      <p className="small">
-        Demand is revealed day-by-day (Mon–Fri). Your bake plan is constant for the whole week.
-      </p>
-
-      <div className="kpi">
-        <div className="pill">Week: <span className="mono">{(session.weekIndex ?? 0) + 1}/{weeks}</span></div>
-        <div className="pill">Revealed days: <span className="mono">{revealIndex}/{totalDays}</span></div>
-        <div className="pill">
-          Your bake plan ({isDeciding ? "last week" : "this week"}): <span className="mono">{orderQty ?? "—"}</span>
-        </div>
-        <div className="pill">
-          Total profit {isDeciding ? "last week" : "in week"}: <span className="mono">{weeklyProfit.toFixed(2)}</span>
-        </div>
-        <div className="pill">Cumulative profit: <span className="mono">{cum.toFixed(2)}</span></div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+        <h2 style={{ margin: 0 }}>Revealed Demand</h2>
+        <span className="small">Bakery doors open Mon–Fri</span>
       </div>
 
-      <div className="hr" />
+      <div className="kpi" style={{ gap: "6px 8px" }}>
+        <div className="pill" style={{ padding: "4px 10px" }}>Week: <span className="mono">{(session.weekIndex ?? 0) + 1}/{weeks}</span></div>
+        <div className="pill" style={{ padding: "4px 10px" }}>Revealed: <span className="mono">{revealIndex}/{totalDays}</span></div>
+        <div className="pill" style={{ padding: "4px 10px" }}>
+          Plan: <span className="mono">{orderQty ?? "—"}</span>
+        </div>
+        <div className="pill" style={{ padding: "4px 10px" }}>
+          Profit: <span className="mono">{weeklyProfit.toFixed(2)}</span>
+        </div>
+        <div className="pill" style={{ padding: "4px 10px" }}>Total: <span className="mono">{cum.toFixed(2)}</span></div>
+      </div>
 
-      <div className="grid three">
+      <div className="hr" style={{ margin: "8px 0" }} />
+
+      <div className="grid five">
         {Array.from({ length: 5 }, (_, i) => {
           const d = weekDays[i];
           const entry = daily.find((x) => x.idx === i);
@@ -100,13 +100,11 @@ export function RevealTheatre({
               <div className="day-label">{DOW[i]}</div>
               <div className={`demand-value${!isRevealed ? " unrevealed" : ""}`}>
                 {isRevealed ? d : "?"}{" "}
-                {isHigh ? "☀️" : isLow ? "🌧️" : ""}
+                {isHigh ? "☀️" : isLow ? "🌧️" : isRevealed ? "☁️" : ""}
               </div>
-              <div className="small">demand</div>
 
               <div className="profit-row">
-                <div className="small">profit</div>
-                <div className="mono" style={{ fontWeight: 700, color: isRevealed ? profitColor : "inherit" }}>
+                <div className="mono" style={{ fontWeight: 700, color: isRevealed ? profitColor : "inherit", textAlign: "center", width: "100%" }}>
                   {isRevealed ? (profitValue >= 0 ? "+" : "") + profitValue.toFixed(2) : "—"}
                 </div>
               </div>

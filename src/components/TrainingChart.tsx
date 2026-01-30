@@ -42,29 +42,31 @@ export function TrainingChart({
         Mean: <span className="mono">{meanHat.toFixed(2)}</span> · Std:{" "}
         <span className="mono">{sigmaHat.toFixed(2)}</span> · n={demands.length}
       </p>
-      <div style={{ height: 200 }}>
+      <div style={{ height: 130 }}>
         <ResponsiveContainer>
           <ComposedChart data={chartData}>
-            <XAxis dataKey="label" tick={{ fontSize: 11 }} interval={0} />
-            <YAxis />
+            <XAxis dataKey="label" tick={{ fontSize: 11, fill: "var(--muted)" }} interval={0} stroke="var(--border)" />
+            <YAxis tick={{ fontSize: 11, fill: "var(--muted)" }} stroke="var(--border)" />
             <Tooltip
+              contentStyle={{ background: "var(--card)", borderColor: "var(--border)", borderRadius: "var(--radius-sm)", color: "var(--ink)" }}
+              itemStyle={{ color: "var(--ink)" }}
               content={(props) => {
                 const payload = props.payload?.filter((p: any) => p?.dataKey !== "curve");
                 return <DefaultTooltipContent {...props} payload={payload} />;
               }}
             />
-            <Bar dataKey="count" />
-            <Line type="monotone" dataKey="curve" dot={false} />
+            <Bar dataKey="count" fill="var(--chart-bar)" radius={[4, 4, 0, 0]} />
+            <Line type="monotone" dataKey="curve" stroke="var(--chart-line)" strokeWidth={2} dot={false} />
           </ComposedChart>
         </ResponsiveContainer>
       </div>
-      <div style={{ flex: 1, minHeight: 120, marginTop: 8 }}>
+      <div style={{ flex: 1, minHeight: 140, marginTop: 8 }}>
         <ResponsiveContainer>
           <ComposedChart data={series}>
-            <XAxis dataKey="day" type="number" domain={[1, totalDays]} tick={{ fontSize: 11 }} allowDataOverflow />
-            <YAxis />
-            <Tooltip />
-            <Line type="monotone" dataKey="demand" dot={latestDot} isAnimationActive={false} />
+            <XAxis dataKey="day" type="number" domain={[1, totalDays]} tick={{ fontSize: 11, fill: "var(--muted)" }} allowDataOverflow stroke="var(--border)" />
+            <YAxis tick={{ fontSize: 11, fill: "var(--muted)" }} stroke="var(--border)" />
+            <Tooltip contentStyle={{ background: "var(--card)", borderColor: "var(--border)", borderRadius: "var(--radius-sm)", color: "var(--ink)" }} />
+            <Line type="monotone" dataKey="demand" stroke="var(--chart-line)" strokeWidth={2} dot={latestDot} isAnimationActive={false} />
           </ComposedChart>
         </ResponsiveContainer>
       </div>

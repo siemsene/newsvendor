@@ -7,7 +7,7 @@ import { api } from "../lib/api";
 import { mean, std, skewness, excessKurtosis, histogram } from "../lib/stats";
 import { Leaderboard } from "../components/Leaderboard";
 import { EndgameCharts } from "../components/EndgameCharts";
-import { Bar, ComposedChart, LineChart, Line, ReferenceDot, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, ComposedChart, LineChart, Line, ReferenceDot, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 
 const PLAYERS_PER_PAGE = 25;
 
@@ -539,18 +539,21 @@ export function HostSession() {
             <div style={{ height: 220 }}>
               <ResponsiveContainer>
                 <LineChart data={payoffData}>
-                  <XAxis dataKey="q" tick={{ fontSize: 11 }} />
-                  <YAxis domain={payoffDomain} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                  <XAxis dataKey="q" tick={{ fill: "var(--muted)", fontSize: 11 }} stroke="var(--border)" />
+                  <YAxis domain={payoffDomain} tick={{ fill: "var(--muted)", fontSize: 11 }} stroke="var(--border)" />
                   <Tooltip
+                    contentStyle={{ background: "var(--card)", borderColor: "var(--border)", borderRadius: "var(--radius-sm)", color: "var(--ink)" }}
+                    itemStyle={{ color: "var(--ink)" }}
                     formatter={(value) => {
                       if (typeof value === "number") return Math.round(value);
                       return value as any;
                     }}
                   />
-                  <Line type="monotone" dataKey="profit" dot={false} />
-                  <ReferenceLine x={session.optimalQ} stroke="#6b4f2a" strokeDasharray="3 3" />
+                  <Line type="monotone" dataKey="profit" dot={false} stroke="var(--accent)" strokeWidth={2} />
+                  <ReferenceLine x={session.optimalQ} stroke="var(--muted)" strokeDasharray="3 3" />
                   {bestInGame && (
-                    <ReferenceDot x={bestInGame.q} y={bestInGame.profit} r={5} fill="#1f5f47" stroke="none" />
+                    <ReferenceDot x={bestInGame.q} y={bestInGame.profit} r={5} fill="var(--success)" stroke="none" />
                   )}
                 </LineChart>
               </ResponsiveContainer>

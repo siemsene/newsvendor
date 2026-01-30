@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
 import type { SessionPublic, PlayerDoc } from "../lib/types";
 import { expandWeeklyOrdersToDays } from "../lib/gameMath";
 
@@ -42,13 +42,21 @@ export function EndgameCharts({
   }, [playedDays]);
 
   const lineData = useMemo(() => {
-    return Array.from({ length: dayCount }, (_, i) => ({
-      day: i + 1,
-      avgDemand,
-      optimalQ,
-      avgOrder: avgOrderPerDay[i] ?? 0,
-    }));
-  }, [dayCount, avgDemand, optimalQ, avgOrderPerDay]);
+    const weeksCount = Math.ceil(dayCount / 5);
+    return Array.from({ length: weeksCount }, (_, i) => {
+      const start = i * 5;
+      const end = Math.min(start + 5, dayCount);
+      const weekOrders = avgOrderPerDay.slice(start, end);
+      const wAvgOrder = weekOrders.length ? weekOrders.reduce((a, b) => a + b, 0) / weekOrders.length : 0;
+
+      return {
+        week: i + 1,
+        avgDemand,
+        optimalQ,
+        avgOrder: wAvgOrder,
+      };
+    });
+  }, [dayCount, playedDays, optimalQ, avgOrderPerDay]);
 
   const payoffCurve = useMemo(() => {
     const inGame = playedDays;
@@ -76,17 +84,21 @@ export function EndgameCharts({
   return (
     <div className="grid two">
       <div className="card">
-        <h2>In-game time series (demand, optimal, average order)</h2>
+        <h2>Weekly time series (avg demand, optimal, avg order)</h2>
         <div style={{ height: 320 }}>
           <ResponsiveContainer>
-            <LineChart data={lineData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="day" />
-              <YAxis />
-              <Tooltip />
-              <Line type="monotone" dataKey="avgDemand" dot={false} stroke="#0b3d91" strokeWidth={2} name="Avg demand" />
-              <Line type="monotone" dataKey="optimalQ" dot={false} stroke="#d62828" strokeWidth={2} name="Optimal Q" />
-              <Line type="monotone" dataKey="avgOrder" dot={false} stroke="#2a9d8f" strokeWidth={2} name="Avg order" />
+            <LineChart data={lineData} margin={{ bottom: 15 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+              <XAxis dataKey="week" tick={{ fill: "var(--muted)", fontSize: 11 }} stroke="var(--border)" label={{ value: "Week", position: "insideBottom", offset: -5, fill: "var(--muted)", fontSize: 11 }} />
+              <YAxis tick={{ fill: "var(--muted)", fontSize: 11 }} stroke="var(--border)" />
+              <Tooltip
+                contentStyle={{ background: "var(--card)", borderColor: "var(--border)", borderRadius: "var(--radius-sm)", color: "var(--ink)" }}
+                itemStyle={{ color: "var(--ink)" }}
+              />
+              <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: 12, color: "var(--muted)" }} />
+              <Line type="monotone" dataKey="avgDemand" dot={false} stroke="var(--chart-line)" strokeWidth={2} name="Global avg demand" />
+              <Line type="monotone" dataKey="optimalQ" dot={false} stroke="var(--danger)" strokeWidth={2} name="Optimal Q" />
+              <Line type="monotone" dataKey="avgOrder" dot={{ r: 3, fill: "var(--success)" }} stroke="var(--success)" strokeWidth={2} name="Avg order" />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -98,16 +110,18 @@ export function EndgameCharts({
         <div style={{ height: 320 }}>
           <ResponsiveContainer>
             <LineChart data={payoffCurve}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="q" label={{ value: "Order quantity", position: "insideBottom", offset: -6 }} />
-              <YAxis label={{ value: "Profit", angle: -90, position: "insideLeft", offset: 10 }} />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+              <XAxis dataKey="q" tick={{ fill: "var(--muted)", fontSize: 11 }} stroke="var(--border)" label={{ value: "Order quantity", position: "insideBottom", offset: -6, fill: "var(--muted)", fontSize: 12 }} />
+              <YAxis tick={{ fill: "var(--muted)", fontSize: 11 }} stroke="var(--border)" label={{ value: "Profit", angle: -90, position: "insideLeft", offset: 10, fill: "var(--muted)", fontSize: 12 }} />
               <Tooltip
+                contentStyle={{ background: "var(--card)", borderColor: "var(--border)", borderRadius: "var(--radius-sm)", color: "var(--ink)" }}
+                itemStyle={{ color: "var(--ink)" }}
                 formatter={(value) => {
                   if (typeof value === "number") return Math.round(value);
                   return value as any;
                 }}
               />
-              <Line type="monotone" dataKey="profit" dot={false} stroke="#6b4f2a" strokeWidth={2} name="Profit" />
+              <Line type="monotone" dataKey="profit" dot={false} stroke="var(--accent)" strokeWidth={2} name="Profit" />
             </LineChart>
           </ResponsiveContainer>
         </div>

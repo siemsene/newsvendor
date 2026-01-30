@@ -210,18 +210,6 @@ export function PlayerGame() {
         </div>
       </div>
 
-      <div className="grid two">
-        {session.status === "training" ? (
-          <div className="card">
-            <h2>Demand distribution</h2>
-            <p className="small">Available once the host starts the session.</p>
-          </div>
-        ) : (
-          <TrainingChart demands={allDemands} meanHat={meanHat} sigmaHat={sigmaHat} totalDays={totalDays} />
-        )}
-        <RevealTheatre session={session} player={player} />
-      </div>
-
       {session.status === "finished" ? (
         <div className="card success-highlight">
           <h2>Game Complete!</h2>
@@ -286,6 +274,18 @@ export function PlayerGame() {
           {msg && <p className="small">{msg}</p>}
         </div>
       )}
+
+      <div className="grid two">
+        {session.status === "training" ? (
+          <div className="card">
+            <h2>Demand distribution</h2>
+            <p className="small">Available once the host starts the session.</p>
+          </div>
+        ) : (
+          <TrainingChart demands={allDemands} meanHat={meanHat} sigmaHat={sigmaHat} totalDays={totalDays} />
+        )}
+        <RevealTheatre session={session} player={player} />
+      </div>
 
       {(session.status === "finished" || session.showLeaderboard) && (
         <Leaderboard rows={session.leaderboard ?? []} />
