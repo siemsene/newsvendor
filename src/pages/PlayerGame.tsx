@@ -24,11 +24,13 @@ export function PlayerGame() {
   const [inputError, setInputError] = useState("");
   const [showNudge, setShowNudge] = useState(false);
   const [showResumed, setShowResumed] = useState(false);
+  const [showSubmitted, setShowSubmitted] = useState(false);
   const [showOutlierModal, setShowOutlierModal] = useState(false);
   const [pendingQty, setPendingQty] = useState<number | null>(null);
   const lastNudgeRef = useRef<number | null>(null);
   const nudgeTimerRef = useRef<number | null>(null);
   const resumedTimerRef = useRef<number | null>(null);
+  const submittedTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -73,6 +75,7 @@ export function PlayerGame() {
     return () => {
       if (nudgeTimerRef.current) window.clearTimeout(nudgeTimerRef.current);
       if (resumedTimerRef.current) window.clearTimeout(resumedTimerRef.current);
+      if (submittedTimerRef.current) window.clearTimeout(submittedTimerRef.current);
     };
   }, []);
 
@@ -124,6 +127,11 @@ export function PlayerGame() {
     setInputError("");
   }, [weekIndex]);
 
+  useEffect(() => {
+    setShowSubmitted(false);
+    if (submittedTimerRef.current) window.clearTimeout(submittedTimerRef.current);
+  }, [weekIndex, session?.status]);
+
   async function submit(force?: boolean) {
     const allowForce = force === true;
     if (!sessionId || !session) return;
@@ -143,6 +151,9 @@ export function PlayerGame() {
       const submitQty = pendingQty ?? q;
       await api.submitOrder({ sessionId, weekIndex, orderQty: submitQty });
       setMsg("");
+      setShowSubmitted(true);
+      if (submittedTimerRef.current) window.clearTimeout(submittedTimerRef.current);
+      submittedTimerRef.current = window.setTimeout(() => setShowSubmitted(false), 4000);
     } catch (e: any) {
       console.error(e);
       setMsg(e?.message ?? "Submit failed");
@@ -267,9 +278,6 @@ export function PlayerGame() {
           </div>
 
           {inputError && <p className="small" style={{ color: "#7a2d2d" }}>{inputError}</p>}
-          {submittedThisWeek !== null && (
-            <p className="small">Bake plan submitted. Waiting for others...</p>
-          )}
           {msg && <div className="hr" />}
           {msg && <p className="small">{msg}</p>}
         </div>
@@ -297,6 +305,7 @@ export function PlayerGame() {
 
       <Toast message="Host nudge: please make your decision now." show={showNudge} tone="alert" />
       <Toast message="Welcome back! Your progress has been restored." show={showResumed} tone="success" />
+      <Toast message="Bake plan submitted. Waiting for others..." show={showSubmitted} tone="success" position="top" />
 
       {showOutlierModal && (
         <div className="modal-backdrop" role="dialog" aria-modal="true">

@@ -99,12 +99,12 @@ export function RevealTheatre({
             >
               <div className="day-label">{DOW[i]}</div>
               <div className={`demand-value${!isRevealed ? " unrevealed" : ""}`}>
-                {isRevealed ? d : "?"}{" "}
-                {isHigh ? "☀️" : isLow ? "🌧️" : isRevealed ? "☁️" : ""}
+                <span>{isRevealed ? d : "?"}</span>
+                <span className="small">{isHigh ? "☀️" : isLow ? "🌧️" : isRevealed ? "☁️" : ""}</span>
               </div>
 
               <div className="profit-row">
-                <div className="mono" style={{ fontWeight: 700, color: isRevealed ? profitColor : "inherit", textAlign: "center", width: "100%" }}>
+                <div className="mono" style={{ fontWeight: 700, color: isRevealed ? profitColor : "inherit", textAlign: "center", fontSize: "12px" }}>
                   {isRevealed ? (profitValue >= 0 ? "+" : "") + profitValue.toFixed(2) : "—"}
                 </div>
               </div>

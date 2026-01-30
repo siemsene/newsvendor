@@ -213,7 +213,7 @@ exports.joinSession = (0, https_1.onCall)(async (request) => {
             resumed = true;
             return;
         }
-        // New UID rejoining - check if name is taken
+        // New UID joining - check if name is taken
         if (nameSnap.exists) {
             throw new https_1.HttpsError("already-exists", "This name is already taken in this session.");
         }
@@ -320,8 +320,6 @@ exports.advanceReveal = (0, https_1.onCall)(async (request) => {
         const D = inGame[revealIndex];
         const dayIndex = revealIndex;
         const weekIndex = Math.floor(dayIndex / 5);
-        // Scaling fix: Advance reveal state immediately to "lock" it
-        tx.update(sessionRef, { status: "revealing" });
         const playersSnap = await tx.get(sessionRef.collection("players"));
         const revealedDemands = Array.isArray(session.revealedDemands) ? session.revealedDemands.slice() : [];
         revealedDemands.push(D);
