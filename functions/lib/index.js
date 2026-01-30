@@ -190,57 +190,47 @@ exports.joinSession = (0, https_1.onCall)(async (request) => {
         const session = sessionSnap.data();
         const weeks = Math.round(Number(session?.weeks ?? 10));
         const playerSnap = await tx.get(playerRef);
-        // Check if this UID already has a player doc
+        const nameLower = name.toLowerCase();
+        const nameRef = sessionRef.collection("names").doc(nameLower);
+        const nameSnap = await tx.get(nameRef);
+        // If UID already has a player doc
         if (playerSnap.exists) {
-            // Same UID rejoining - just update activity
+            const oldPlayer = playerSnap.data();
+            const oldNameLower = oldPlayer.name.toLowerCase();
+            // If name changed, check availability
+            if (oldNameLower !== nameLower) {
+                if (nameSnap.exists && nameSnap.data()?.uid !== uid) {
+                    throw new https_1.HttpsError("already-exists", "This name is already taken in this session.");
+                }
+                tx.delete(sessionRef.collection("names").doc(oldNameLower));
+            }
             tx.set(playerRef, {
                 name,
                 isActive: true,
                 lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
             }, { merge: true });
+            tx.set(nameRef, { uid });
             resumed = true;
             return;
         }
-        // Check if there's an existing player with the same name (case-insensitive)
-        const playersSnap = await tx.get(sessionRef.collection("players"));
-        const nameLower = name.toLowerCase();
-        const existingPlayer = playersSnap.docs.find((doc) => String(doc.data().name ?? "").toLowerCase() === nameLower);
-        if (existingPlayer && existingPlayer.id !== uid) {
-            // Found existing player with same name but different UID - transfer their data
-            const oldData = existingPlayer.data();
-            const oldRef = existingPlayer.ref;
-            // Create new player doc with the old data but new UID
-            tx.create(playerRef, {
-                name: oldData.name ?? name,
-                joinedAt: oldData.joinedAt ?? admin.firestore.FieldValue.serverTimestamp(),
-                isActive: true,
-                ordersByWeek: oldData.ordersByWeek ?? Array.from({ length: Math.max(1, weeks) }, () => null),
-                dailyProfit: oldData.dailyProfit ?? [],
-                cumulativeProfit: oldData.cumulativeProfit ?? 0,
-                submittedWeek: oldData.submittedWeek ?? null,
-                lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
-                lastNudgedAt: oldData.lastNudgedAt ?? null,
-            });
-            // Delete the old player doc
-            tx.delete(oldRef);
-            // Note: playersCount stays the same since we're transferring, not adding
-            resumed = true;
+        // New UID rejoining - check if name is taken
+        if (nameSnap.exists) {
+            throw new https_1.HttpsError("already-exists", "This name is already taken in this session.");
         }
-        else {
-            // New player - create fresh record
-            tx.create(playerRef, {
-                name,
-                joinedAt: admin.firestore.FieldValue.serverTimestamp(),
-                isActive: true,
-                ordersByWeek: Array.from({ length: Math.max(1, weeks) }, () => null),
-                dailyProfit: [],
-                cumulativeProfit: 0,
-                submittedWeek: null,
-                lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
-                lastNudgedAt: null,
-            });
-            tx.update(sessionRef, { playersCount: admin.firestore.FieldValue.increment(1) });
-        }
+        // New player - create fresh record
+        tx.create(playerRef, {
+            name,
+            joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+            isActive: true,
+            ordersByWeek: Array.from({ length: Math.max(1, weeks) }, () => null),
+            dailyProfit: [],
+            cumulativeProfit: 0,
+            submittedWeek: null,
+            lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+            lastNudgedAt: null,
+        });
+        tx.set(nameRef, { uid });
+        tx.update(sessionRef, { playersCount: admin.firestore.FieldValue.increment(1) });
     });
     return { sessionId, resumed };
 });
@@ -330,6 +320,8 @@ exports.advanceReveal = (0, https_1.onCall)(async (request) => {
         const D = inGame[revealIndex];
         const dayIndex = revealIndex;
         const weekIndex = Math.floor(dayIndex / 5);
+        // Scaling fix: Advance reveal state immediately to "lock" it
+        tx.update(sessionRef, { status: "revealing" });
         const playersSnap = await tx.get(sessionRef.collection("players"));
         const revealedDemands = Array.isArray(session.revealedDemands) ? session.revealedDemands.slice() : [];
         revealedDemands.push(D);
@@ -582,8 +574,8 @@ exports.finishWeek = (0, https_1.onCall)(async (request) => {
         throw new https_1.HttpsError("not-found", "Session not found.");
     const session = sessionSnap.data();
     const status = session.status;
-    if (status !== "ordering" && status !== "training") {
-        throw new https_1.HttpsError("failed-precondition", "Cannot finish week during revealing or after game ended.");
+    if (status !== "ordering" && status !== "training" && status !== "revealing") {
+        throw new https_1.HttpsError("failed-precondition", "Cannot finish week after game ended.");
     }
     const weekIndex = Number(session.weekIndex ?? 0);
     const weeks = Math.round(Number(session.weeks ?? 10));

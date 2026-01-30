@@ -188,45 +188,21 @@ export const joinSession = onCall(async (request) => {
     const weeks = Math.round(Number(session?.weeks ?? 10));
 
     const playerSnap = await tx.get(playerRef);
-
-    // Check if this UID already has a player doc
-    if (playerSnap.exists) {
-      // Same UID rejoining - just update activity
-      tx.set(
-        playerRef,
-        {
-          name,
-          isActive: true,
-          lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
-      resumed = true;
-      return;
-    }
-
-    // Check for existing player with the same name (case-insensitive)
     const nameLower = name.toLowerCase();
     const nameRef = sessionRef.collection("names").doc(nameLower);
     const nameSnap = await tx.get(nameRef);
 
-    if (nameSnap.exists) {
-      const existingUid = nameSnap.data()?.uid;
-      if (existingUid && existingUid !== uid) {
-        // Name already taken by another UID
-        throw new HttpsError("already-exists", "This name is already taken in this session.");
-      }
-    }
-
-    const playerSnap = await tx.get(playerRef);
-
-    // Check if this UID already has a player doc
+    // If UID already has a player doc
     if (playerSnap.exists) {
       const oldPlayer = playerSnap.data() as any;
-      // If name changed, we need to handle the old name doc if we wanted to be perfect, 
-      // but for simplicity we just update the player and the new name doc.
-      if (oldPlayer.name.toLowerCase() !== nameLower) {
-        tx.delete(sessionRef.collection("names").doc(oldPlayer.name.toLowerCase()));
+      const oldNameLower = oldPlayer.name.toLowerCase();
+
+      // If name changed, check availability
+      if (oldNameLower !== nameLower) {
+        if (nameSnap.exists && nameSnap.data()?.uid !== uid) {
+          throw new HttpsError("already-exists", "This name is already taken in this session.");
+        }
+        tx.delete(sessionRef.collection("names").doc(oldNameLower));
       }
 
       tx.set(
@@ -241,6 +217,11 @@ export const joinSession = onCall(async (request) => {
       tx.set(nameRef, { uid });
       resumed = true;
       return;
+    }
+
+    // New UID rejoining - check if name is taken
+    if (nameSnap.exists) {
+      throw new HttpsError("already-exists", "This name is already taken in this session.");
     }
 
     // New player - create fresh record
