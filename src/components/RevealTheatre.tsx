@@ -4,6 +4,16 @@ import type { SessionPublic, PlayerDoc } from "../lib/types";
 import { profitForDay } from "../lib/gameMath";
 import { Toast } from "./Toast";
 
+// Dragon images for weekly cheer
+import dragon1 from "../assets/dragons/dragon_1.png";
+import dragon2 from "../assets/dragons/dragon_2.png";
+import dragon3 from "../assets/dragons/dragon_3.png";
+import dragon4 from "../assets/dragons/dragon_4.png";
+import dragon5 from "../assets/dragons/dragon_5.png";
+import dragon6 from "../assets/dragons/dragon_6.png";
+
+const DRAGONS = [dragon1, dragon2, dragon3, dragon4, dragon5, dragon6];
+
 const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
 export function RevealTheatre({
@@ -111,6 +121,32 @@ export function RevealTheatre({
             </motion.div>
           );
         })}
+      </div>
+
+      {/* Dragon of the week! */}
+      <div style={{
+        display: "flex",
+        justifyContent: "center",
+        marginTop: 12,
+        paddingTop: 8,
+        borderTop: "1px solid var(--border-soft)",
+        opacity: 0.9
+      }}>
+        <motion.img
+          key={session.weekIndex}
+          src={DRAGONS[(session.weekIndex ?? 0) % DRAGONS.length]}
+          alt="Dragon of the week"
+          style={{
+            width: 120,
+            height: 120,
+            borderRadius: 12,
+            objectFit: "cover",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.15)"
+          }}
+          initial={{ scale: 0, rotate: -10 }}
+          animate={{ scale: 1, rotate: 0 }}
+          transition={{ type: "spring", stiffness: 260, damping: 20 }}
+        />
       </div>
 
       <Toast message={toast} show={showToast} />

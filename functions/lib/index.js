@@ -33,18 +33,31 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.cleanupOldSessions = exports.kickPlayer = exports.finishWeek = exports.endSession = exports.redrawSession = exports.startSession = exports.advanceReveal = exports.nudgePlayer = exports.submitOrder = exports.joinSession = exports.createSession = exports.hostLogin = void 0;
+exports.dailyPendingApprovalsEmail = exports.cleanupOldSessions = exports.getMySessions = exports.kickPlayer = exports.finishWeek = exports.deleteSession = exports.endSession = exports.redrawSession = exports.startSession = exports.advanceReveal = exports.nudgePlayer = exports.submitOrder = exports.joinSession = exports.createSession = exports.getInstructorUsageStats = exports.revokeInstructorAccess = exports.rejectInstructor = exports.approveInstructor = exports.getInstructorDetail = exports.listAllInstructors = exports.listPendingInstructors = exports.requestPasswordReset = exports.checkInstructorStatus = exports.registerInstructor = void 0;
 const admin = __importStar(require("firebase-admin"));
 const https_1 = require("firebase-functions/v2/https");
 const v2_1 = require("firebase-functions/v2");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
-const params_1 = require("firebase-functions/params");
 const demand_1 = require("./demand");
 const profit_1 = require("./profit");
 const auth_1 = require("./auth");
+const email_1 = require("./email");
+// Re-export instructor auth functions
+var instructorAuth_1 = require("./instructorAuth");
+Object.defineProperty(exports, "registerInstructor", { enumerable: true, get: function () { return instructorAuth_1.registerInstructor; } });
+Object.defineProperty(exports, "checkInstructorStatus", { enumerable: true, get: function () { return instructorAuth_1.checkInstructorStatus; } });
+Object.defineProperty(exports, "requestPasswordReset", { enumerable: true, get: function () { return instructorAuth_1.requestPasswordReset; } });
+// Re-export admin functions
+var admin_1 = require("./admin");
+Object.defineProperty(exports, "listPendingInstructors", { enumerable: true, get: function () { return admin_1.listPendingInstructors; } });
+Object.defineProperty(exports, "listAllInstructors", { enumerable: true, get: function () { return admin_1.listAllInstructors; } });
+Object.defineProperty(exports, "getInstructorDetail", { enumerable: true, get: function () { return admin_1.getInstructorDetail; } });
+Object.defineProperty(exports, "approveInstructor", { enumerable: true, get: function () { return admin_1.approveInstructor; } });
+Object.defineProperty(exports, "rejectInstructor", { enumerable: true, get: function () { return admin_1.rejectInstructor; } });
+Object.defineProperty(exports, "revokeInstructorAccess", { enumerable: true, get: function () { return admin_1.revokeInstructorAccess; } });
+Object.defineProperty(exports, "getInstructorUsageStats", { enumerable: true, get: function () { return admin_1.getInstructorUsageStats; } });
 admin.initializeApp();
 const db = admin.firestore();
-const hostPassword = (0, params_1.defineSecret)("HOST_PASSWORD");
 (0, v2_1.setGlobalOptions)({ region: "us-central1" });
 function requireAuth(context) {
     if (!context.auth)
@@ -120,24 +133,8 @@ async function createSessionWithUniqueCode(payload) {
     }
     throw new https_1.HttpsError("internal", "Failed to generate unique session code.");
 }
-exports.hostLogin = (0, https_1.onCall)({ secrets: [hostPassword] }, async (request) => {
-    const uid = requireAuth(request);
-    const password = (request.data?.password ?? "");
-    const secret = hostPassword.value();
-    if (!secret) {
-        if (password !== "Sesame") {
-            throw new https_1.HttpsError("permission-denied", "Wrong host password.");
-        }
-    }
-    else if (password !== secret) {
-        throw new https_1.HttpsError("permission-denied", "Wrong host password.");
-    }
-    await admin.auth().setCustomUserClaims(uid, { role: "host" });
-    return { ok: true };
-});
 exports.createSession = (0, https_1.onCall)(async (request) => {
-    const uid = requireAuth(request);
-    await (0, auth_1.assertHost)(request);
+    const uid = await (0, auth_1.assertInstructor)(request);
     const demandMu = Number(request.data?.demandMu ?? 50);
     const demandSigma = Number(request.data?.demandSigma ?? 20);
     const price = Number(request.data?.price ?? 1.0);
@@ -154,7 +151,7 @@ exports.createSession = (0, https_1.onCall)(async (request) => {
     const nGame = weeks * 5;
     const dataset = (0, demand_1.generateDemandDataset)({ mu: demandMu, sigma: demandSigma, nTrain: 50, nGame, price, cost, salvage }, seed);
     const drawFailed = dataset.training.length === 0 || dataset.inGame.length === 0;
-    return createSessionWithUniqueCode({
+    const result = await createSessionWithUniqueCode({
         uid,
         demandMu,
         demandSigma,
@@ -166,11 +163,22 @@ exports.createSession = (0, https_1.onCall)(async (request) => {
         seed,
         drawFailed,
     });
+    // Update instructor stats
+    const instructorRef = db.collection("instructors").doc(uid);
+    const instructorDoc = await instructorRef.get();
+    if (instructorDoc.exists) {
+        await instructorRef.update({
+            sessionsCreated: admin.firestore.FieldValue.increment(1),
+            activeSessions: admin.firestore.FieldValue.increment(1),
+        });
+    }
+    return result;
 });
 exports.joinSession = (0, https_1.onCall)(async (request) => {
     const uid = requireAuth(request);
     const code = String(request.data?.code ?? "").trim().toUpperCase();
     const name = String(request.data?.name ?? "").trim();
+    const allowTakeover = Boolean(request.data?.allowTakeover);
     if (!code)
         throw new https_1.HttpsError("invalid-argument", "Missing session code.");
     if (!name)
@@ -193,13 +201,14 @@ exports.joinSession = (0, https_1.onCall)(async (request) => {
         const nameLower = name.toLowerCase();
         const nameRef = sessionRef.collection("names").doc(nameLower);
         const nameSnap = await tx.get(nameRef);
+        const nameUid = nameSnap.exists ? String(nameSnap.data()?.uid ?? "") : "";
         // If UID already has a player doc
         if (playerSnap.exists) {
             const oldPlayer = playerSnap.data();
             const oldNameLower = oldPlayer.name.toLowerCase();
             // If name changed, check availability
             if (oldNameLower !== nameLower) {
-                if (nameSnap.exists && nameSnap.data()?.uid !== uid) {
+                if (nameSnap.exists && nameUid !== uid) {
                     throw new https_1.HttpsError("already-exists", "This name is already taken in this session.");
                 }
                 tx.delete(sessionRef.collection("names").doc(oldNameLower));
@@ -213,9 +222,42 @@ exports.joinSession = (0, https_1.onCall)(async (request) => {
             resumed = true;
             return;
         }
-        // New UID joining - check if name is taken
-        if (nameSnap.exists) {
-            throw new https_1.HttpsError("already-exists", "This name is already taken in this session.");
+        // New UID joining - if name is taken, only allow if takeover is confirmed
+        if (nameSnap.exists && nameUid) {
+            if (nameUid === uid) {
+                tx.set(playerRef, {
+                    name,
+                    joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    isActive: true,
+                    ordersByWeek: Array.from({ length: Math.max(1, weeks) }, () => null),
+                    dailyProfit: [],
+                    cumulativeProfit: 0,
+                    submittedWeek: null,
+                    lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+                    lastNudgedAt: null,
+                }, { merge: true });
+                tx.set(nameRef, { uid });
+                resumed = false;
+                return;
+            }
+            if (!allowTakeover) {
+                throw new https_1.HttpsError("already-exists", "Name already in use.");
+            }
+            const existingPlayerRef = sessionRef.collection("players").doc(nameUid);
+            const existingPlayerSnap = await tx.get(existingPlayerRef);
+            if (existingPlayerSnap.exists) {
+                const existingData = existingPlayerSnap.data();
+                tx.set(playerRef, {
+                    ...existingData,
+                    name,
+                    isActive: true,
+                    lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+                }, { merge: true });
+                tx.delete(existingPlayerRef);
+                tx.set(nameRef, { uid });
+                resumed = true;
+                return;
+            }
         }
         // New player - create fresh record
         tx.create(playerRef, {
@@ -276,11 +318,11 @@ exports.submitOrder = (0, https_1.onCall)(async (request) => {
     return { ok: true };
 });
 exports.nudgePlayer = (0, https_1.onCall)(async (request) => {
-    await (0, auth_1.assertHost)(request);
     const sessionId = String(request.data?.sessionId ?? "");
     const targetUid = String(request.data?.uid ?? "");
     if (!sessionId || !targetUid)
         throw new https_1.HttpsError("invalid-argument", "Missing args.");
+    await (0, auth_1.assertSessionOwner)(request, sessionId);
     const ref = db.collection("sessions").doc(sessionId).collection("players").doc(targetUid);
     await ref.set({ lastNudgedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
     await db.collection("sessions").doc(sessionId).collection("events").add({
@@ -291,10 +333,10 @@ exports.nudgePlayer = (0, https_1.onCall)(async (request) => {
     return { ok: true };
 });
 exports.advanceReveal = (0, https_1.onCall)(async (request) => {
-    await (0, auth_1.assertHost)(request);
     const sessionId = String(request.data?.sessionId ?? "");
     if (!sessionId)
         throw new https_1.HttpsError("invalid-argument", "Missing sessionId.");
+    await (0, auth_1.assertSessionOwner)(request, sessionId);
     const sessionRef = db.collection("sessions").doc(sessionId);
     const privateRef = sessionRef.collection("private").doc("demand");
     let nextReveal = 0;
@@ -406,10 +448,10 @@ exports.advanceReveal = (0, https_1.onCall)(async (request) => {
     return { ok: true, revealIndex: nextReveal };
 });
 exports.startSession = (0, https_1.onCall)(async (request) => {
-    await (0, auth_1.assertHost)(request);
     const sessionId = String(request.data?.sessionId ?? "");
     if (!sessionId)
         throw new https_1.HttpsError("invalid-argument", "Missing sessionId.");
+    await (0, auth_1.assertSessionOwner)(request, sessionId);
     const sessionRef = db.collection("sessions").doc(sessionId);
     const sessionSnap = await sessionRef.get();
     if (!sessionSnap.exists)
@@ -426,10 +468,10 @@ exports.startSession = (0, https_1.onCall)(async (request) => {
     return { ok: true };
 });
 exports.redrawSession = (0, https_1.onCall)(async (request) => {
-    await (0, auth_1.assertHost)(request);
     const sessionId = String(request.data?.sessionId ?? "");
     if (!sessionId)
         throw new https_1.HttpsError("invalid-argument", "Missing sessionId.");
+    await (0, auth_1.assertSessionOwner)(request, sessionId);
     const sessionRef = db.collection("sessions").doc(sessionId);
     const sessionSnap = await sessionRef.get();
     if (!sessionSnap.exists)
@@ -472,10 +514,18 @@ exports.redrawSession = (0, https_1.onCall)(async (request) => {
     return { ok: true };
 });
 exports.endSession = (0, https_1.onCall)(async (request) => {
-    await (0, auth_1.assertHost)(request);
     const sessionId = String(request.data?.sessionId ?? "");
     if (!sessionId)
         throw new https_1.HttpsError("invalid-argument", "Missing sessionId.");
+    const uid = await (0, auth_1.assertSessionOwner)(request, sessionId);
+    // Decrement active sessions for the instructor
+    const instructorRef = db.collection("instructors").doc(uid);
+    const instructorDoc = await instructorRef.get();
+    if (instructorDoc.exists) {
+        await instructorRef.update({
+            activeSessions: admin.firestore.FieldValue.increment(-1),
+        });
+    }
     const sessionRef = db.collection("sessions").doc(sessionId);
     const privateRef = sessionRef.collection("private").doc("demand");
     // Collect player updates to batch write outside transaction
@@ -561,11 +611,32 @@ exports.endSession = (0, https_1.onCall)(async (request) => {
     }
     return { ok: true };
 });
-exports.finishWeek = (0, https_1.onCall)(async (request) => {
-    await (0, auth_1.assertHost)(request);
+exports.deleteSession = (0, https_1.onCall)(async (request) => {
     const sessionId = String(request.data?.sessionId ?? "");
     if (!sessionId)
         throw new https_1.HttpsError("invalid-argument", "Missing sessionId.");
+    await (0, auth_1.assertSessionOwner)(request, sessionId);
+    const sessionRef = db.collection("sessions").doc(sessionId);
+    const sessionSnap = await sessionRef.get();
+    if (!sessionSnap.exists)
+        throw new https_1.HttpsError("not-found", "Session not found.");
+    const session = sessionSnap.data();
+    // Only allow deleting finished sessions
+    if (session.status !== "finished") {
+        throw new https_1.HttpsError("failed-precondition", "Only finished sessions can be deleted.");
+    }
+    const code = session.code;
+    await db.recursiveDelete(sessionRef);
+    if (code) {
+        await db.collection("sessionCodes").doc(String(code)).delete();
+    }
+    return { ok: true };
+});
+exports.finishWeek = (0, https_1.onCall)(async (request) => {
+    const sessionId = String(request.data?.sessionId ?? "");
+    if (!sessionId)
+        throw new https_1.HttpsError("invalid-argument", "Missing sessionId.");
+    await (0, auth_1.assertSessionOwner)(request, sessionId);
     const sessionRef = db.collection("sessions").doc(sessionId);
     const sessionSnap = await sessionRef.get();
     if (!sessionSnap.exists)
@@ -618,21 +689,64 @@ exports.finishWeek = (0, https_1.onCall)(async (request) => {
     return { ok: true, updated: playersToUpdate.length, defaultOrder: demandMu };
 });
 exports.kickPlayer = (0, https_1.onCall)(async (request) => {
-    await (0, auth_1.assertHost)(request);
     const sessionId = String(request.data?.sessionId ?? "");
-    const uid = String(request.data?.uid ?? "");
-    if (!sessionId || !uid)
+    const targetUid = String(request.data?.uid ?? "");
+    if (!sessionId || !targetUid)
         throw new https_1.HttpsError("invalid-argument", "Missing args.");
-    const playerRef = db.collection("sessions").doc(sessionId).collection("players").doc(uid);
+    await (0, auth_1.assertSessionOwner)(request, sessionId);
+    const playerRef = db.collection("sessions").doc(sessionId).collection("players").doc(targetUid);
     const playerSnap = await playerRef.get();
     if (!playerSnap.exists)
         throw new https_1.HttpsError("not-found", "Player not found.");
     await playerRef.delete();
     return { ok: true };
 });
+exports.getMySessions = (0, https_1.onCall)(async (request) => {
+    const uid = await (0, auth_1.assertInstructor)(request);
+    const snapshot = await db
+        .collection("sessions")
+        .where("createdByUid", "==", uid)
+        .orderBy("createdAt", "desc")
+        .limit(50)
+        .get();
+    const sessions = snapshot.docs.map((doc) => {
+        const data = doc.data();
+        return {
+            sessionId: doc.id,
+            code: data.code,
+            status: data.status,
+            playersCount: data.playersCount ?? 0,
+            weeks: data.weeks,
+            weekIndex: data.weekIndex,
+            createdAt: data.createdAt?.toDate?.()?.toISOString() ?? null,
+        };
+    });
+    return { sessions };
+});
 exports.cleanupOldSessions = (0, scheduler_1.onSchedule)("every 24 hours", async () => {
     const cutoff = admin.firestore.Timestamp.fromDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
     const snap = await db.collection("sessions").where("createdAt", "<", cutoff).get();
+    // Also decrement active sessions counts for instructors
+    const instructorUpdates = new Map();
+    for (const doc of snap.docs) {
+        const data = doc.data();
+        const creatorUid = data.createdByUid;
+        const status = data.status;
+        // Count active sessions being deleted
+        if (creatorUid && ["lobby", "training", "ordering", "revealing"].includes(status)) {
+            instructorUpdates.set(creatorUid, (instructorUpdates.get(creatorUid) || 0) + 1);
+        }
+    }
+    // Update instructor active sessions counts
+    for (const [instructorUid, count] of instructorUpdates) {
+        const instructorRef = db.collection("instructors").doc(instructorUid);
+        const instructorDoc = await instructorRef.get();
+        if (instructorDoc.exists) {
+            await instructorRef.update({
+                activeSessions: admin.firestore.FieldValue.increment(-count),
+            });
+        }
+    }
     const deletions = snap.docs.map(async (doc) => {
         const code = doc.data().code;
         await db.recursiveDelete(doc.ref);
@@ -641,4 +755,25 @@ exports.cleanupOldSessions = (0, scheduler_1.onSchedule)("every 24 hours", async
         }
     });
     await Promise.all(deletions);
+});
+// Send daily email to admin if there are pending instructor approvals
+exports.dailyPendingApprovalsEmail = (0, scheduler_1.onSchedule)("every day 18:00", async () => {
+    const pendingSnap = await db
+        .collection("instructors")
+        .where("status", "==", "pending")
+        .get();
+    if (pendingSnap.empty) {
+        console.log("No pending instructor approvals.");
+        return;
+    }
+    const pendingInstructors = pendingSnap.docs.map((doc) => {
+        const data = doc.data();
+        return {
+            name: String(data.displayName ?? "Unknown"),
+            email: String(data.email ?? ""),
+            affiliation: String(data.affiliation ?? ""),
+        };
+    });
+    await (0, email_1.sendAdminPendingApprovalsSummary)(pendingInstructors.length, pendingInstructors);
+    console.log(`Sent pending approvals email: ${pendingInstructors.length} pending.`);
 });

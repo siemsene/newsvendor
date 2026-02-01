@@ -2,14 +2,31 @@ import * as admin from "firebase-admin";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { setGlobalOptions } from "firebase-functions/v2";
 import { onSchedule } from "firebase-functions/v2/scheduler";
-import { defineSecret } from "firebase-functions/params";
 import { generateDemandDataset } from "./demand";
 import { profitForDay } from "./profit";
-import { assertHost } from "./auth";
+import { assertHost, assertSessionOwner, assertInstructor } from "./auth";
+import { sendAdminPendingApprovalsSummary } from "./email";
+
+// Re-export instructor auth functions
+export {
+  registerInstructor,
+  checkInstructorStatus,
+  requestPasswordReset,
+} from "./instructorAuth";
+
+// Re-export admin functions
+export {
+  listPendingInstructors,
+  listAllInstructors,
+  getInstructorDetail,
+  approveInstructor,
+  rejectInstructor,
+  revokeInstructorAccess,
+  getInstructorUsageStats,
+} from "./admin";
 
 admin.initializeApp();
 const db = admin.firestore();
-const hostPassword = defineSecret("HOST_PASSWORD");
 
 setGlobalOptions({ region: "us-central1" });
 
@@ -108,27 +125,8 @@ async function createSessionWithUniqueCode(payload: {
   throw new HttpsError("internal", "Failed to generate unique session code.");
 }
 
-export const hostLogin = onCall({ secrets: [hostPassword] }, async (request) => {
-  const uid = requireAuth(request);
-  const password = (request.data?.password ?? "") as string;
-
-  const secret = hostPassword.value();
-
-  if (!secret) {
-    if (password !== "Sesame") {
-      throw new HttpsError("permission-denied", "Wrong host password.");
-    }
-  } else if (password !== secret) {
-    throw new HttpsError("permission-denied", "Wrong host password.");
-  }
-
-  await admin.auth().setCustomUserClaims(uid, { role: "host" });
-  return { ok: true };
-});
-
 export const createSession = onCall(async (request) => {
-  const uid = requireAuth(request);
-  await assertHost(request);
+  const uid = await assertInstructor(request);
 
   const demandMu = Number(request.data?.demandMu ?? 50);
   const demandSigma = Number(request.data?.demandSigma ?? 20);
@@ -148,7 +146,7 @@ export const createSession = onCall(async (request) => {
     seed
   );
   const drawFailed = dataset.training.length === 0 || dataset.inGame.length === 0;
-  return createSessionWithUniqueCode({
+  const result = await createSessionWithUniqueCode({
     uid,
     demandMu,
     demandSigma,
@@ -160,12 +158,25 @@ export const createSession = onCall(async (request) => {
     seed,
     drawFailed,
   });
+
+  // Update instructor stats
+  const instructorRef = db.collection("instructors").doc(uid);
+  const instructorDoc = await instructorRef.get();
+  if (instructorDoc.exists) {
+    await instructorRef.update({
+      sessionsCreated: admin.firestore.FieldValue.increment(1),
+      activeSessions: admin.firestore.FieldValue.increment(1),
+    });
+  }
+
+  return result;
 });
 
 export const joinSession = onCall(async (request) => {
   const uid = requireAuth(request);
   const code = String(request.data?.code ?? "").trim().toUpperCase();
   const name = String(request.data?.name ?? "").trim();
+  const allowTakeover = Boolean(request.data?.allowTakeover);
 
   if (!code) throw new HttpsError("invalid-argument", "Missing session code.");
   if (!name) throw new HttpsError("invalid-argument", "Missing name.");
@@ -191,6 +202,7 @@ export const joinSession = onCall(async (request) => {
     const nameLower = name.toLowerCase();
     const nameRef = sessionRef.collection("names").doc(nameLower);
     const nameSnap = await tx.get(nameRef);
+    const nameUid = nameSnap.exists ? String(nameSnap.data()?.uid ?? "") : "";
 
     // If UID already has a player doc
     if (playerSnap.exists) {
@@ -199,7 +211,7 @@ export const joinSession = onCall(async (request) => {
 
       // If name changed, check availability
       if (oldNameLower !== nameLower) {
-        if (nameSnap.exists && nameSnap.data()?.uid !== uid) {
+        if (nameSnap.exists && nameUid !== uid) {
           throw new HttpsError("already-exists", "This name is already taken in this session.");
         }
         tx.delete(sessionRef.collection("names").doc(oldNameLower));
@@ -219,9 +231,52 @@ export const joinSession = onCall(async (request) => {
       return;
     }
 
-    // New UID joining - check if name is taken
-    if (nameSnap.exists) {
-      throw new HttpsError("already-exists", "This name is already taken in this session.");
+    // New UID joining - if name is taken, only allow if takeover is confirmed
+    if (nameSnap.exists && nameUid) {
+      if (nameUid === uid) {
+        tx.set(
+          playerRef,
+          {
+            name,
+            joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+            isActive: true,
+            ordersByWeek: Array.from({ length: Math.max(1, weeks) }, () => null),
+            dailyProfit: [],
+            cumulativeProfit: 0,
+            submittedWeek: null,
+            lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+            lastNudgedAt: null,
+          },
+          { merge: true }
+        );
+        tx.set(nameRef, { uid });
+        resumed = false;
+        return;
+      }
+
+      if (!allowTakeover) {
+        throw new HttpsError("already-exists", "Name already in use.");
+      }
+
+      const existingPlayerRef = sessionRef.collection("players").doc(nameUid);
+      const existingPlayerSnap = await tx.get(existingPlayerRef);
+      if (existingPlayerSnap.exists) {
+        const existingData = existingPlayerSnap.data() as any;
+        tx.set(
+          playerRef,
+          {
+            ...existingData,
+            name,
+            isActive: true,
+            lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        tx.delete(existingPlayerRef);
+        tx.set(nameRef, { uid });
+        resumed = true;
+        return;
+      }
     }
 
     // New player - create fresh record
@@ -296,10 +351,10 @@ export const submitOrder = onCall(async (request) => {
 });
 
 export const nudgePlayer = onCall(async (request) => {
-  await assertHost(request);
   const sessionId = String(request.data?.sessionId ?? "");
   const targetUid = String(request.data?.uid ?? "");
   if (!sessionId || !targetUid) throw new HttpsError("invalid-argument", "Missing args.");
+  await assertSessionOwner(request, sessionId);
 
   const ref = db.collection("sessions").doc(sessionId).collection("players").doc(targetUid);
   await ref.set({ lastNudgedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
@@ -314,9 +369,9 @@ export const nudgePlayer = onCall(async (request) => {
 });
 
 export const advanceReveal = onCall(async (request) => {
-  await assertHost(request);
   const sessionId = String(request.data?.sessionId ?? "");
   if (!sessionId) throw new HttpsError("invalid-argument", "Missing sessionId.");
+  await assertSessionOwner(request, sessionId);
 
   const sessionRef = db.collection("sessions").doc(sessionId);
   const privateRef = sessionRef.collection("private").doc("demand");
@@ -456,9 +511,9 @@ export const advanceReveal = onCall(async (request) => {
 });
 
 export const startSession = onCall(async (request) => {
-  await assertHost(request);
   const sessionId = String(request.data?.sessionId ?? "");
   if (!sessionId) throw new HttpsError("invalid-argument", "Missing sessionId.");
+  await assertSessionOwner(request, sessionId);
 
   const sessionRef = db.collection("sessions").doc(sessionId);
   const sessionSnap = await sessionRef.get();
@@ -479,9 +534,9 @@ export const startSession = onCall(async (request) => {
 });
 
 export const redrawSession = onCall(async (request) => {
-  await assertHost(request);
   const sessionId = String(request.data?.sessionId ?? "");
   if (!sessionId) throw new HttpsError("invalid-argument", "Missing sessionId.");
+  await assertSessionOwner(request, sessionId);
 
   const sessionRef = db.collection("sessions").doc(sessionId);
   const sessionSnap = await sessionRef.get();
@@ -534,9 +589,18 @@ export const redrawSession = onCall(async (request) => {
 });
 
 export const endSession = onCall(async (request) => {
-  await assertHost(request);
   const sessionId = String(request.data?.sessionId ?? "");
   if (!sessionId) throw new HttpsError("invalid-argument", "Missing sessionId.");
+  const uid = await assertSessionOwner(request, sessionId);
+
+  // Decrement active sessions for the instructor
+  const instructorRef = db.collection("instructors").doc(uid);
+  const instructorDoc = await instructorRef.get();
+  if (instructorDoc.exists) {
+    await instructorRef.update({
+      activeSessions: admin.firestore.FieldValue.increment(-1),
+    });
+  }
 
   const sessionRef = db.collection("sessions").doc(sessionId);
   const privateRef = sessionRef.collection("private").doc("demand");
@@ -644,10 +708,34 @@ export const endSession = onCall(async (request) => {
   return { ok: true };
 });
 
-export const finishWeek = onCall(async (request) => {
-  await assertHost(request);
+export const deleteSession = onCall(async (request) => {
   const sessionId = String(request.data?.sessionId ?? "");
   if (!sessionId) throw new HttpsError("invalid-argument", "Missing sessionId.");
+  await assertSessionOwner(request, sessionId);
+
+  const sessionRef = db.collection("sessions").doc(sessionId);
+  const sessionSnap = await sessionRef.get();
+  if (!sessionSnap.exists) throw new HttpsError("not-found", "Session not found.");
+  const session = sessionSnap.data() as any;
+
+  // Only allow deleting finished sessions
+  if (session.status !== "finished") {
+    throw new HttpsError("failed-precondition", "Only finished sessions can be deleted.");
+  }
+
+  const code = session.code;
+  await db.recursiveDelete(sessionRef);
+  if (code) {
+    await db.collection("sessionCodes").doc(String(code)).delete();
+  }
+
+  return { ok: true };
+});
+
+export const finishWeek = onCall(async (request) => {
+  const sessionId = String(request.data?.sessionId ?? "");
+  if (!sessionId) throw new HttpsError("invalid-argument", "Missing sessionId.");
+  await assertSessionOwner(request, sessionId);
 
   const sessionRef = db.collection("sessions").doc(sessionId);
   const sessionSnap = await sessionRef.get();
@@ -718,12 +806,12 @@ export const finishWeek = onCall(async (request) => {
 });
 
 export const kickPlayer = onCall(async (request) => {
-  await assertHost(request);
   const sessionId = String(request.data?.sessionId ?? "");
-  const uid = String(request.data?.uid ?? "");
-  if (!sessionId || !uid) throw new HttpsError("invalid-argument", "Missing args.");
+  const targetUid = String(request.data?.uid ?? "");
+  if (!sessionId || !targetUid) throw new HttpsError("invalid-argument", "Missing args.");
+  await assertSessionOwner(request, sessionId);
 
-  const playerRef = db.collection("sessions").doc(sessionId).collection("players").doc(uid);
+  const playerRef = db.collection("sessions").doc(sessionId).collection("players").doc(targetUid);
   const playerSnap = await playerRef.get();
   if (!playerSnap.exists) throw new HttpsError("not-found", "Player not found.");
 
@@ -731,9 +819,61 @@ export const kickPlayer = onCall(async (request) => {
   return { ok: true };
 });
 
+export const getMySessions = onCall(async (request) => {
+  const uid = await assertInstructor(request);
+
+  const snapshot = await db
+    .collection("sessions")
+    .where("createdByUid", "==", uid)
+    .orderBy("createdAt", "desc")
+    .limit(50)
+    .get();
+
+  const sessions = snapshot.docs.map((doc) => {
+    const data = doc.data();
+    return {
+      sessionId: doc.id,
+      code: data.code,
+      status: data.status,
+      playersCount: data.playersCount ?? 0,
+      weeks: data.weeks,
+      weekIndex: data.weekIndex,
+      createdAt: data.createdAt?.toDate?.()?.toISOString() ?? null,
+    };
+  });
+
+  return { sessions };
+});
+
 export const cleanupOldSessions = onSchedule("every 24 hours", async () => {
   const cutoff = admin.firestore.Timestamp.fromDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
   const snap = await db.collection("sessions").where("createdAt", "<", cutoff).get();
+
+  // Also decrement active sessions counts for instructors
+  const instructorUpdates = new Map<string, number>();
+
+  for (const doc of snap.docs) {
+    const data = doc.data();
+    const creatorUid = data.createdByUid;
+    const status = data.status;
+
+    // Count active sessions being deleted
+    if (creatorUid && ["lobby", "training", "ordering", "revealing"].includes(status)) {
+      instructorUpdates.set(creatorUid, (instructorUpdates.get(creatorUid) || 0) + 1);
+    }
+  }
+
+  // Update instructor active sessions counts
+  for (const [instructorUid, count] of instructorUpdates) {
+    const instructorRef = db.collection("instructors").doc(instructorUid);
+    const instructorDoc = await instructorRef.get();
+    if (instructorDoc.exists) {
+      await instructorRef.update({
+        activeSessions: admin.firestore.FieldValue.increment(-count),
+      });
+    }
+  }
+
   const deletions = snap.docs.map(async (doc) => {
     const code = doc.data().code;
     await db.recursiveDelete(doc.ref);
@@ -742,4 +882,29 @@ export const cleanupOldSessions = onSchedule("every 24 hours", async () => {
     }
   });
   await Promise.all(deletions);
+});
+
+// Send daily email to admin if there are pending instructor approvals
+export const dailyPendingApprovalsEmail = onSchedule("every day 18:00", async () => {
+  const pendingSnap = await db
+    .collection("instructors")
+    .where("status", "==", "pending")
+    .get();
+
+  if (pendingSnap.empty) {
+    console.log("No pending instructor approvals.");
+    return;
+  }
+
+  const pendingInstructors = pendingSnap.docs.map((doc) => {
+    const data = doc.data();
+    return {
+      name: String(data.displayName ?? "Unknown"),
+      email: String(data.email ?? ""),
+      affiliation: String(data.affiliation ?? ""),
+    };
+  });
+
+  await sendAdminPendingApprovalsSummary(pendingInstructors.length, pendingInstructors);
+  console.log(`Sent pending approvals email: ${pendingInstructors.length} pending.`);
 });

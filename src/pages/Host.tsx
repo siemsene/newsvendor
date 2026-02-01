@@ -7,7 +7,7 @@ import type { SessionPublic } from "../lib/types";
 import { Link } from "react-router-dom";
 
 export function Host() {
-  const { user, role } = useAuthState();
+  const { user, isApprovedInstructor, isAdmin } = useAuthState();
 
   const [params, setParams] = useState({
     demandMu: 50,
@@ -31,9 +31,8 @@ export function Host() {
     return onSnapshot(
       q,
       (snap) => {
-        const rows = snap.docs
+      const rows = snap.docs
           .map((d) => ({ id: d.id, data: d.data() as any }))
-          .filter((row) => row.data?.status !== "finished")
           .sort((a, b) => {
             const aMs = (a.data.createdAt?.toMillis?.() ?? 0) as number;
             const bMs = (b.data.createdAt?.toMillis?.() ?? 0) as number;
@@ -51,8 +50,8 @@ export function Host() {
 
   async function createSession() {
     setMsg("");
-    if (role !== "host") {
-      setMsg("You are not recognized as host. Go to Home and log in with the host password.");
+    if (!isApprovedInstructor) {
+      setMsg("You need to be an approved instructor to create sessions.");
       return;
     }
     setBusy(true);
@@ -82,21 +81,42 @@ export function Host() {
     }
   }
 
+  async function deleteSession(sessionId: string) {
+    if (!confirm("Delete this finished session? This cannot be undone.")) return;
+    setListMsg("");
+    setBusy(true);
+    try {
+      await api.deleteSession({ sessionId });
+      setListMsg("Session deleted.");
+    } catch (e: any) {
+      console.error(e);
+      setListMsg(e?.message ?? "Delete session failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const activeSessions = sessions.filter((s) => s.data?.status !== "finished");
+  const finishedSessions = sessions.filter((s) => s.data?.status === "finished");
+
   return (
     <div className="grid two">
       <div className="card">
         <div className="row" style={{ marginBottom: 12 }}>
           <h2 style={{ margin: 0 }}>Create New Session</h2>
-          {role === "host" && <span className="badge success">Host Mode</span>}
+          {isApprovedInstructor && <span className="badge success">{isAdmin ? "Admin" : "Instructor"}</span>}
         </div>
-        <p className="small">Configure demand distribution and pricing parameters for the game.</p>
+        <p className="small">Set the demand model, pricing, and duration before you launch.</p>
 
         <div className="hr" />
 
-        <h3>Demand Distribution</h3>
+        <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
+          <h3 style={{ margin: 0 }}>Demand Distribution</h3>
+          <span className="small">Training + in-game demand draws</span>
+        </div>
         <div className="grid two">
           <div>
-            <label>Mean (μ)</label>
+            <label>Mean (mu)</label>
             <input
               type="number"
               value={params.demandMu}
@@ -104,7 +124,7 @@ export function Host() {
             />
           </div>
           <div>
-            <label>Std Deviation (σ)</label>
+            <label>Std Deviation (sigma)</label>
             <input
               type="number"
               value={params.demandSigma}
@@ -113,7 +133,10 @@ export function Host() {
           </div>
         </div>
 
-        <h3 style={{ marginTop: 16 }}>Pricing</h3>
+        <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginTop: 16 }}>
+          <h3 style={{ margin: 0 }}>Pricing</h3>
+          <span className="small">All values are per-unit</span>
+        </div>
         <div className="grid three">
           <div>
             <label>Sales Price</label>
@@ -129,7 +152,10 @@ export function Host() {
           </div>
         </div>
 
-        <h3 style={{ marginTop: 16 }}>Duration</h3>
+        <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginTop: 16 }}>
+          <h3 style={{ margin: 0 }}>Duration</h3>
+          <span className="small">{params.weeks * 5} total days</span>
+        </div>
         <div className="grid two">
           <div>
             <label>Weeks in Game</label>
@@ -143,9 +169,9 @@ export function Host() {
             />
           </div>
           <div>
-            <label>&nbsp;</label>
+            <label>Schedule</label>
             <div className="small" style={{ padding: "12px 0" }}>
-              = {params.weeks * 5} total days ({params.weeks} weeks × 5 days)
+              {params.weeks} weeks x 5 days = <span className="mono">{params.weeks * 5}</span> decisions
             </div>
           </div>
         </div>
@@ -153,10 +179,10 @@ export function Host() {
         <div className="hr" />
 
         <div className="row">
-          <button className={`btn${busy ? " loading" : ""}`} disabled={busy || role !== "host"} onClick={createSession}>
+          <button className={`btn${busy ? " loading" : ""}`} disabled={busy || !isApprovedInstructor} onClick={createSession}>
             Create Session
           </button>
-          {role !== "host" && <span className="small text-danger">Login as host first.</span>}
+          {!isApprovedInstructor && <span className="small text-danger">Instructor access required.</span>}
         </div>
 
         {created && (
@@ -178,18 +204,23 @@ export function Host() {
       <div className="card">
         <div className="row" style={{ marginBottom: 8 }}>
           <h2 style={{ margin: 0 }}>Your Sessions</h2>
-          <span className="badge">{sessions.length} active</span>
+          <span className="badge">{activeSessions.length} active</span>
         </div>
         <p className="small">Click to open the host control room.</p>
+        <div style={{ background: "var(--warning-bg, #fff3cd)", border: "1px solid var(--warning-border, #ffc107)", borderRadius: 6, padding: "8px 12px", marginBottom: 12 }}>
+          <p className="small" style={{ margin: 0, color: "var(--warning-text, #856404)" }}>
+            Sessions are automatically deleted after 30 days.
+          </p>
+        </div>
         <div className="hr" />
         {listMsg && <p className="text-danger">{listMsg}</p>}
-        {sessions.length === 0 ? (
+        {activeSessions.length === 0 ? (
           <div style={{ textAlign: "center", padding: "30px 0" }}>
             <p className="small">No active sessions. Create one to get started.</p>
           </div>
         ) : (
           <div className="grid">
-            {sessions.map((s) => {
+            {activeSessions.map((s) => {
               const statusConfig: { label: string; dotClass: string } = {
                 lobby: { label: "Lobby", dotClass: "pending" },
                 training: { label: "Training", dotClass: "pending" },
@@ -213,7 +244,7 @@ export function Host() {
                       <Link className="btn secondary" to={`/host/session/${s.id}`}>Open</Link>
                       <button
                         className="btn ghost"
-                        disabled={busy || s.data.status === "finished"}
+                        disabled={busy}
                         onClick={() => {
                           if (confirm("End this session for all players?")) {
                             endSession(s.id);
@@ -229,10 +260,87 @@ export function Host() {
             })}
           </div>
         )}
+
+        {finishedSessions.length > 0 && (
+          <>
+            <div className="hr" />
+            <div className="row" style={{ marginBottom: 8 }}>
+              <h3 style={{ margin: 0 }}>Completed Sessions</h3>
+              <span className="badge">{finishedSessions.length} total</span>
+            </div>
+            <p className="small">Open to review, or delete if no longer needed.</p>
+            <div className="grid">
+              {finishedSessions.map((s) => (
+                <div key={s.id} className="player-card">
+                  <div className="row">
+                    <div style={{ flex: 1 }}>
+                      <div className="row" style={{ gap: 8, marginBottom: 4 }}>
+                        <span className="mono font-bold" style={{ fontSize: 16 }}>{s.data.code}</span>
+                        <span className="status-dot finished" />
+                      </div>
+                      <div className="small">
+                        Week {(s.data.weekIndex ?? 0) + 1} of {s.data.weeks ?? 10} · {s.data.playersCount ?? 0} players
+                      </div>
+                    </div>
+                    <div className="row">
+                      <Link className="btn secondary" to={`/host/session/${s.id}`}>Open</Link>
+                      <button
+                        className="btn danger"
+                        disabled={busy}
+                        onClick={() => deleteSession(s.id)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
         <div className="hr" />
         <p className="small">
           Players join at the homepage using the session code.
         </p>
+      </div>
+
+      <div className="card">
+        <h2>Setup Summary</h2>
+        <p className="small">A quick snapshot of the configuration you are about to launch.</p>
+        <div className="hr" />
+        <div className="kpi">
+          <div className="pill accent">
+            Mean: <span className="mono">{params.demandMu}</span>
+          </div>
+          <div className="pill">
+            Std: <span className="mono">{params.demandSigma}</span>
+          </div>
+          <div className="pill">
+            Weeks: <span className="mono">{params.weeks}</span>
+          </div>
+          <div className="pill">
+            Days: <span className="mono">{params.weeks * 5}</span>
+          </div>
+        </div>
+        <div className="hr" />
+        <div className="grid two">
+          <div className="card highlight">
+            <h3>Margins</h3>
+            <p className="small" style={{ marginTop: 6 }}>
+              Sell: <span className="mono">${params.price.toFixed(2)}</span> / Cost:{" "}
+              <span className="mono">${params.cost.toFixed(2)}</span>
+            </p>
+            <p className="small">
+              Salvage: <span className="mono">${params.salvage.toFixed(2)}</span>
+            </p>
+          </div>
+          <div className="card">
+            <h3>Notes</h3>
+            <p className="small">
+              You can redraw the distribution before starting if you want a different dataset.
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   );

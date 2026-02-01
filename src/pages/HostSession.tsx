@@ -95,8 +95,15 @@ export function HostSession() {
   const skewHat = useMemo(() => skewness(allDemands), [allDemands]);
   const kurtHat = useMemo(() => excessKurtosis(allDemands), [allDemands]);
   const demandHistogram = useMemo(() => (allDemands.length ? histogram(allDemands, 10) : null), [allDemands]);
+  const payoffSource = useMemo(() => {
+    if (!session) return [];
+    if (inGameDemands.length > 0) return inGameDemands;
+    if (session.revealedDemands && session.revealedDemands.length > 0) return session.revealedDemands;
+    return trainingDemands;
+  }, [session, inGameDemands, trainingDemands]);
+
   const payoffData = useMemo(() => {
-    if (!session || inGameDemands.length === 0) return [];
+    if (!session || payoffSource.length === 0) return [];
     const optimalQ = Number(session.optimalQ ?? 0);
     const delta = Math.max(1, Math.round(0.15 * Math.max(1, optimalQ)));
     const minQ = Math.max(0, Math.round(optimalQ - delta));
@@ -109,7 +116,7 @@ export function HostSession() {
     const rows: Array<{ q: number; profit: number }> = [];
     for (let q = minQ; q <= maxQ; q += step) {
       let profit = 0;
-      for (const d of inGameDemands) {
+      for (const d of payoffSource) {
         const sold = Math.min(q, d);
         const leftover = Math.max(0, q - sold);
         profit += price * sold + salvage * leftover - cost * q;
@@ -117,10 +124,10 @@ export function HostSession() {
       rows.push({ q, profit });
     }
     return rows;
-  }, [session, inGameDemands]);
+  }, [session, payoffSource]);
   const bestInGame = useMemo(() => {
-    if (!session || inGameDemands.length === 0) return null;
-    const maxDemand = Math.max(0, ...inGameDemands);
+    if (!session || payoffSource.length === 0) return null;
+    const maxDemand = Math.max(0, ...payoffSource);
     const maxQ = Math.max(10, Math.ceil(maxDemand + Number(session.demandSigma ?? 0)));
     const price = Number(session.price ?? 1);
     const cost = Number(session.cost ?? 0.2);
@@ -129,7 +136,7 @@ export function HostSession() {
     let bestProfit = -Infinity;
     for (let q = 0; q <= maxQ; q++) {
       let profit = 0;
-      for (const d of inGameDemands) {
+      for (const d of payoffSource) {
         const sold = Math.min(q, d);
         const leftover = Math.max(0, q - sold);
         profit += price * sold + salvage * leftover - cost * q;
@@ -140,7 +147,7 @@ export function HostSession() {
       }
     }
     return { q: bestQ, profit: bestProfit };
-  }, [session, inGameDemands]);
+  }, [session, payoffSource]);
   const payoffDomain = useMemo(() => {
     if (!payoffData.length) return undefined;
     let min = payoffData[0].profit;
@@ -450,7 +457,7 @@ export function HostSession() {
         <div className="row">
           {session.status === "training" ? (
             <>
-              <button className="btn" disabled={busy || players.length === 0} onClick={start}>
+              <button className="btn large" disabled={busy || players.length === 0} onClick={start}>
                 Start session
               </button>
               <button className="btn ghost" disabled={busy} onClick={redraw}>
@@ -533,7 +540,7 @@ export function HostSession() {
           <div className="card">
             <h2>In-game payoff curve</h2>
             <p className="small">
-              Profit across all in-game days vs. order quantity (Q). Optimal Q* is{" "}
+              Profit across the available demand draws vs. order quantity (Q). Optimal Q* is{" "}
               <span className="mono">{session.optimalQ}</span>.
             </p>
             <div style={{ height: 220 }}>

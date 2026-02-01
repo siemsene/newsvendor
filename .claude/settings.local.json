@@ -1,7 +1,18 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(xargs cat:*)",
+      "Bash(npm install)",
+      "Bash(npm install:*)",
+      "Bash(npm:*)",
+      "Bash(node:*)",
+      "Bash(powershell -Command \"cd ''C:\\\\Users\\\\siems\\\\games\\\\newsvendor\\\\functions''; npm install\")",
+      "Bash(cmd /c \"cd /d C:\\\\Users\\\\siems\\\\games\\\\newsvendor\\\\functions && npm install\")",
+      "Bash(cmd /c \"cd C:\\\\Users\\\\siems\\\\games\\\\newsvendor\\\\functions & npm install 2>&1\")",
+      "Bash(dir:*)",
+      "Bash(npx tsc)",
+      "Bash(npx tsc:*)"
     ]
   }
 }

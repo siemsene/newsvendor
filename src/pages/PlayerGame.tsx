@@ -204,7 +204,7 @@ export function PlayerGame() {
           </div>
         </div>
         <div className="kpi">
-          <div className="pill accent">
+          <div className="pill">
             Sell Price: <span className="mono">{session.price.toFixed(2)}</span>
           </div>
           <div className="pill">

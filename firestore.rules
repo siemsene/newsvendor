@@ -3,32 +3,93 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     function isSignedIn() { return request.auth != null; }
-    function isHost() { return isSignedIn() && request.auth.token.role == "host"; }
+
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.role == "admin";
+    }
+
+    function isApprovedInstructor() {
+      return isSignedIn() &&
+        request.auth.token.role in ["instructor", "admin", "host"] &&
+        (
+          request.auth.token.role == "admin" ||
+          request.auth.token.role == "host" ||
+          get(/databases/$(database)/documents/instructors/$(request.auth.uid)).data.status == "approved"
+        );
+    }
+
+    function isSessionOwner(sessionId) {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/sessions/$(sessionId)).data.createdByUid == request.auth.uid;
+    }
+
+    function isSessionOwnerDoc() {
+      return isSignedIn() && resource.data.createdByUid == request.auth.uid;
+    }
+
     function isMember(sessionId) {
       return isSignedIn() &&
         exists(/databases/$(database)/documents/sessions/$(sessionId)/players/$(request.auth.uid));
     }
 
-    match /sessions/{sessionId} {
-      allow read: if isHost() || isMember(sessionId);
+    // Admin config - only admin can read/write
+    match /adminConfig/{docId} {
+      allow read, write: if isAdmin();
+    }
 
-      allow create: if isHost();
-      allow update: if isHost();
-      allow delete: if isHost();
+    // Instructors collection
+    match /instructors/{uid} {
+      // Anyone can create their own pending instructor doc (via Cloud Function)
+      // But in practice this is done server-side
+      allow create: if isSignedIn() && request.auth.uid == uid &&
+        request.resource.data.status == "pending";
+
+      // Instructors can read their own doc
+      allow read: if isSignedIn() && request.auth.uid == uid;
+
+      // Admin can read all and update status
+      allow read, write: if isAdmin();
+    }
+
+    // Sessions collection
+    match /sessions/{sessionId} {
+      // Session owner, admin, or member can read
+      allow read: if isAdmin() || isSessionOwnerDoc() || isMember(sessionId);
+
+      // Only approved instructors/admin can create
+      allow create: if isApprovedInstructor();
+
+      // Only owner or admin can update/delete
+      allow update, delete: if isAdmin() || isSessionOwnerDoc();
 
       match /players/{uid} {
-        allow read: if isHost() || (isSignedIn() && request.auth.uid == uid);
+        // Owner, admin, or the player themselves can read
+        allow read: if isAdmin() || isSessionOwner(sessionId) || (isSignedIn() && request.auth.uid == uid);
+        // Write through Cloud Functions only
         allow write: if false;
       }
 
       match /private/{docId} {
-        allow read, write: if isHost();
+        // Only owner or admin
+        allow read, write: if isAdmin() || isSessionOwner(sessionId);
       }
 
       match /events/{eventId} {
-        allow read: if isHost();
-        allow write: if isHost();
+        // Only owner or admin
+        allow read, write: if isAdmin() || isSessionOwner(sessionId);
       }
+
+      match /names/{nameId} {
+        // Only owner or admin can read names
+        allow read: if isAdmin() || isSessionOwner(sessionId);
+        allow write: if false;
+      }
+    }
+
+    // Session codes lookup
+    match /sessionCodes/{code} {
+      allow read: if isSignedIn();
+      allow write: if false;
     }
   }
 }

@@ -1,4 +1,23 @@
-export type Role = "host" | "player";
+export type Role = "admin" | "instructor" | "host" | "player";
+
+export type InstructorStatus = "pending" | "approved" | "rejected" | "revoked";
+
+export type InstructorDoc = {
+  uid: string;
+  email: string;
+  displayName: string;
+  affiliation: string;
+  status: InstructorStatus;
+  appliedAt: any;
+  approvedAt?: any;
+  rejectedAt?: any;
+  rejectedReason?: string;
+  revokedAt?: any;
+  revokedReason?: string;
+  lastLoginAt?: any;
+  sessionsCreated: number;
+  activeSessions: number;
+};
 
 export type SessionStatus = "lobby" | "training" | "ordering" | "revealing" | "finished";
 
