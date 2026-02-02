@@ -6,14 +6,81 @@ exports.sendInstructorRejectionEmail = sendInstructorRejectionEmail;
 exports.sendInstructorRevocationEmail = sendInstructorRevocationEmail;
 exports.sendAdminPendingApprovalsSummary = sendAdminPendingApprovalsSummary;
 const SMTP2GO_API_URL = "https://api.smtp2go.com/v3/email/send";
-const FROM_EMAIL = "Newsvendor Game <noreply@newsvendor.app>";
+const FROM_EMAIL = "Newsvendor Game <notifications@newsvendor.app>";
+const REPLY_TO_EMAIL = "admin@edutool.org";
 const ADMIN_EMAIL = "siemsene@gmail.com";
+function wrapHtmlBody(content) {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>Newsvendor Game</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 16px; line-height: 1.5; color: #333333; background-color: #f9f9f9;">
+  <table role="presentation" style="width: 100%; border-collapse: collapse;">
+    <tr>
+      <td style="padding: 20px;">
+        <table role="presentation" style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+          <tr>
+            <td style="padding: 24px 32px; background-color: #2563eb;">
+              <h1 style="margin: 0; color: #ffffff; font-size: 20px; font-weight: 600;">Newsvendor Game</h1>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 32px;">
+              ${content}
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 24px 32px; background-color: #f5f5f5; border-top: 1px solid #e5e5e5;">
+              <p style="margin: 0 0 8px 0; font-size: 12px; color: #666666;">
+                This is an automated message from Newsvendor Game.
+              </p>
+              <p style="margin: 0; font-size: 12px; color: #666666;">
+                Questions? Contact us at <a href="mailto:${REPLY_TO_EMAIL}" style="color: #2563eb;">${REPLY_TO_EMAIL}</a>
+              </p>
+              <p style="margin: 16px 0 0 0; font-size: 11px; color: #999999;">
+                Newsvendor Game - Educational Supply Chain Simulation<br>
+                <a href="https://newsvendor.app" style="color: #999999;">https://newsvendor.app</a>
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+function htmlToPlainText(html) {
+    return html
+        .replace(/<h[1-6][^>]*>(.*?)<\/h[1-6]>/gi, "$1\n\n")
+        .replace(/<p[^>]*>(.*?)<\/p>/gi, "$1\n\n")
+        .replace(/<br\s*\/?>/gi, "\n")
+        .replace(/<a[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/gi, "$2 ($1)")
+        .replace(/<li[^>]*>(.*?)<\/li>/gi, "- $1\n")
+        .replace(/<strong>(.*?)<\/strong>/gi, "$1")
+        .replace(/<em>(.*?)<\/em>/gi, "$1")
+        .replace(/<[^>]+>/g, "")
+        .replace(/&nbsp;/g, " ")
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"')
+        .replace(/&#039;/g, "'")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+}
 async function sendEmail(to, subject, html) {
     const apiKey = process.env.SMTP2GO_API_KEY;
     if (!apiKey) {
         console.warn("SMTP2GO_API_KEY not set, skipping email");
         return;
     }
+    const wrappedHtml = wrapHtmlBody(html);
+    const plainText = htmlToPlainText(html);
     const response = await fetch(SMTP2GO_API_URL, {
         method: "POST",
         headers: {
@@ -24,7 +91,18 @@ async function sendEmail(to, subject, html) {
             to: [to],
             sender: FROM_EMAIL,
             subject,
-            html_body: html,
+            html_body: wrappedHtml,
+            text_body: plainText,
+            custom_headers: [
+                {
+                    header: "Reply-To",
+                    value: REPLY_TO_EMAIL,
+                },
+                {
+                    header: "X-Mailer",
+                    value: "Newsvendor Game Notification System",
+                },
+            ],
         }),
     });
     if (!response.ok) {
@@ -59,7 +137,7 @@ async function sendInstructorApprovalEmail(email, name) {
       <p>Hi ${escapeHtml(name)},</p>
       <p>Your instructor account has been approved. You can now log in and start creating sessions for your students.</p>
       <p><a href="https://newsvendor.app/instructor/login">Log in to your account</a></p>
-      <p>If you have any questions, please contact us at ${ADMIN_EMAIL}.</p>
+      <p>If you have any questions, feel free to reply to this email.</p>
     `);
 }
 async function sendInstructorRejectionEmail(email, name, reason) {
@@ -69,7 +147,7 @@ async function sendInstructorRejectionEmail(email, name, reason) {
       <p>We've reviewed your instructor application for the Newsvendor Game.</p>
       <p>Unfortunately, we are unable to approve your application at this time.</p>
       ${reason ? `<p><strong>Reason:</strong> ${escapeHtml(reason)}</p>` : ""}
-      <p>If you believe this is an error or have additional information to provide, please contact us at ${ADMIN_EMAIL}.</p>
+      <p>If you believe this is an error or have additional information to provide, please reply to this email.</p>
     `);
 }
 async function sendInstructorRevocationEmail(email, name, reason) {
@@ -78,7 +156,7 @@ async function sendInstructorRevocationEmail(email, name, reason) {
       <p>Hi ${escapeHtml(name)},</p>
       <p>Your instructor access to the Newsvendor Game has been revoked.</p>
       ${reason ? `<p><strong>Reason:</strong> ${escapeHtml(reason)}</p>` : ""}
-      <p>All your active sessions have been ended. If you believe this is an error, please contact us at ${ADMIN_EMAIL}.</p>
+      <p>All your active sessions have been ended. If you believe this is an error, please reply to this email.</p>
     `);
 }
 async function sendAdminPendingApprovalsSummary(pendingCount, pendingInstructors) {
