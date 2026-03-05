@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { db } from "../lib/firebase";
 import { api } from "../lib/api";
 import type { InstructorStatus } from "../lib/types";
 
@@ -16,11 +18,109 @@ type InstructorListItem = {
   activeSessions: number;
 };
 
+/* ===== Toast System ===== */
+type Toast = {
+  id: number;
+  message: string;
+  type: "success" | "error" | "info";
+  exiting?: boolean;
+};
+
+let toastId = 0;
+
+function ToastContainer({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: number) => void }) {
+  return (
+    <>
+      {toasts.map((t, i) => (
+        <div
+          key={t.id}
+          className={`toast ${t.type === "error" ? "toast-alert" : t.type === "success" ? "toast-success" : ""} ${t.exiting ? "toast-exit" : "toast-enter"}`}
+          style={{ bottom: 24 + i * 64 }}
+          onClick={() => onDismiss(t.id)}
+        >
+          {t.message}
+        </div>
+      ))}
+    </>
+  );
+}
+
+/* ===== Confirm Modal ===== */
+function ConfirmModal({
+  title,
+  message,
+  confirmLabel,
+  confirmClass,
+  onConfirm,
+  onCancel,
+}: {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  confirmClass?: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h3>{title}</h3>
+        <p>{message}</p>
+        <div className="modal-actions">
+          <button className="btn outline small" onClick={onCancel}>Cancel</button>
+          <button className={`btn small ${confirmClass ?? ""}`} onClick={onConfirm}>{confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ===== Prompt Modal ===== */
+function PromptModal({
+  title,
+  message,
+  placeholder,
+  confirmLabel,
+  confirmClass,
+  onConfirm,
+  onCancel,
+}: {
+  title: string;
+  message: string;
+  placeholder?: string;
+  confirmLabel: string;
+  confirmClass?: string;
+  onConfirm: (value: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState("");
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h3>{title}</h3>
+        <p>{message}</p>
+        <textarea
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder={placeholder ?? ""}
+          autoFocus
+        />
+        <div className="modal-actions">
+          <button className="btn outline small" onClick={onCancel}>Cancel</button>
+          <button className={`btn small ${confirmClass ?? ""}`} onClick={() => onConfirm(value)}>{confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function AdminDashboard() {
   const nav = useNavigate();
   const [tab, setTab] = useState<"pending" | "all">("pending");
   const [instructors, setInstructors] = useState<InstructorListItem[]>([]);
+  const [pendingInstructors, setPendingInstructors] = useState<InstructorListItem[]>([]);
   const [pendingCount, setPendingCount] = useState(0);
+  const [liveConnected, setLiveConnected] = useState(false);
   const [stats, setStats] = useState({
     instructorCounts: { pending: 0, approved: 0, rejected: 0, revoked: 0 },
     totalSessions: 0,
@@ -31,70 +131,176 @@ export function AdminDashboard() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState("");
 
-  async function loadData() {
+  // Modal state
+  const [modal, setModal] = useState<{
+    type: "confirm" | "prompt";
+    title: string;
+    message: string;
+    placeholder?: string;
+    confirmLabel: string;
+    confirmClass?: string;
+    onConfirm: (value?: string) => void;
+  } | null>(null);
+
+  // Toast state
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const toastTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+
+  const addToast = useCallback((message: string, type: Toast["type"] = "info") => {
+    const id = ++toastId;
+    setToasts((prev) => [...prev, { id, message, type }]);
+    const timer = setTimeout(() => {
+      setToasts((prev) => prev.map((t) => (t.id === id ? { ...t, exiting: true } : t)));
+      setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 300);
+    }, 4000);
+    toastTimers.current.set(id, timer);
+  }, []);
+
+  const dismissToast = useCallback((id: number) => {
+    const timer = toastTimers.current.get(id);
+    if (timer) clearTimeout(timer);
+    setToasts((prev) => prev.map((t) => (t.id === id ? { ...t, exiting: true } : t)));
+    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 300);
+  }, []);
+
+  // Real-time listener for pending instructors
+  useEffect(() => {
+    const q = query(
+      collection(db, "instructors"),
+      where("status", "==", "pending")
+    );
+    const unsub = onSnapshot(
+      q,
+      (snapshot) => {
+        const pending: InstructorListItem[] = snapshot.docs.map((doc) => {
+          const d = doc.data();
+          return {
+            uid: doc.id,
+            email: d.email ?? "",
+            displayName: d.displayName ?? "",
+            affiliation: d.affiliation ?? "",
+            status: "pending" as InstructorStatus,
+            appliedAt: d.appliedAt?.toDate?.()?.toISOString() ?? null,
+            approvedAt: null,
+            lastLoginAt: d.lastLoginAt?.toDate?.()?.toISOString() ?? null,
+            sessionsCreated: d.sessionsCreated ?? 0,
+            activeSessions: d.activeSessions ?? 0,
+          };
+        });
+        pending.sort((a, b) => {
+          if (!a.appliedAt || !b.appliedAt) return 0;
+          return new Date(b.appliedAt).getTime() - new Date(a.appliedAt).getTime();
+        });
+        setPendingInstructors(pending);
+        setPendingCount(pending.length);
+        setLiveConnected(true);
+        if (tab === "pending") setLoading(false);
+      },
+      (err) => {
+        console.error("Pending listener error:", err);
+        setLiveConnected(false);
+      }
+    );
+    return () => unsub();
+  }, []);
+
+  // Load stats and "all" tab data
+  const loadData = useCallback(async () => {
     setLoading(true);
     try {
       const [statsRes, instructorsRes] = await Promise.all([
         api.getInstructorUsageStats(),
-        tab === "pending"
-          ? api.listPendingInstructors()
-          : api.listAllInstructors({ status: statusFilter === "all" ? undefined : statusFilter }),
+        tab === "all"
+          ? api.listAllInstructors({ status: statusFilter === "all" ? undefined : statusFilter })
+          : Promise.resolve(null),
       ]);
-      setPendingCount(statsRes.data.instructorCounts.pending);
       setStats(statsRes.data);
-      setInstructors(instructorsRes.data.instructors);
+      if (instructorsRes) {
+        setInstructors(instructorsRes.data.instructors);
+      }
     } catch (e) {
       console.error("Failed to load admin data:", e);
     } finally {
       setLoading(false);
     }
-  }
+  }, [tab, statusFilter]);
 
   useEffect(() => {
     loadData();
-  }, [tab, statusFilter]);
+  }, [loadData]);
+
+  // Determine which list to display
+  const displayList = tab === "pending" ? pendingInstructors : instructors;
 
   async function handleApprove(uid: string) {
-    if (!confirm("Approve this instructor?")) return;
-    setActionBusy(uid);
-    try {
-      await api.approveInstructor({ uid });
-      await loadData();
-    } catch (e: any) {
-      alert(e?.message ?? "Failed to approve");
-    } finally {
-      setActionBusy(null);
-    }
+    setModal({
+      type: "confirm",
+      title: "Approve Instructor",
+      message: "Are you sure you want to approve this instructor? They will be able to create sessions immediately.",
+      confirmLabel: "Approve",
+      confirmClass: "success",
+      onConfirm: async () => {
+        setModal(null);
+        setActionBusy(uid);
+        try {
+          await api.approveInstructor({ uid });
+          addToast("Instructor approved successfully", "success");
+          await loadData();
+        } catch (e: any) {
+          addToast(e?.message ?? "Failed to approve", "error");
+        } finally {
+          setActionBusy(null);
+        }
+      },
+    });
   }
 
   async function handleReject(uid: string) {
-    const reason = prompt("Rejection reason (optional):");
-    if (reason === null) return;
-    setActionBusy(uid);
-    try {
-      await api.rejectInstructor({ uid, reason: reason || undefined });
-      await loadData();
-    } catch (e: any) {
-      alert(e?.message ?? "Failed to reject");
-    } finally {
-      setActionBusy(null);
-    }
+    setModal({
+      type: "prompt",
+      title: "Reject Instructor",
+      message: "Provide a reason for rejection (optional):",
+      placeholder: "e.g. Incomplete application, unverified affiliation...",
+      confirmLabel: "Reject",
+      confirmClass: "danger",
+      onConfirm: async (reason) => {
+        setModal(null);
+        setActionBusy(uid);
+        try {
+          await api.rejectInstructor({ uid, reason: reason || undefined });
+          addToast("Instructor rejected", "success");
+          await loadData();
+        } catch (e: any) {
+          addToast(e?.message ?? "Failed to reject", "error");
+        } finally {
+          setActionBusy(null);
+        }
+      },
+    });
   }
 
   async function handleRevoke(uid: string) {
-    const reason = prompt("Revocation reason (optional):");
-    if (reason === null) return;
-    if (!confirm("This will end all their active sessions. Continue?")) return;
-    setActionBusy(uid);
-    try {
-      const res = await api.revokeInstructorAccess({ uid, reason: reason || undefined });
-      alert(`Access revoked. ${res.data.sessionsEnded} sessions ended.`);
-      await loadData();
-    } catch (e: any) {
-      alert(e?.message ?? "Failed to revoke");
-    } finally {
-      setActionBusy(null);
-    }
+    setModal({
+      type: "prompt",
+      title: "Revoke Instructor Access",
+      message: "This will end all their active sessions. Provide a reason (optional):",
+      placeholder: "e.g. Terms violation, inactive account...",
+      confirmLabel: "Revoke Access",
+      confirmClass: "danger",
+      onConfirm: async (reason) => {
+        setModal(null);
+        setActionBusy(uid);
+        try {
+          const res = await api.revokeInstructorAccess({ uid, reason: reason || undefined });
+          addToast(`Access revoked. ${res.data.sessionsEnded} session(s) ended.`, "success");
+          await loadData();
+        } catch (e: any) {
+          addToast(e?.message ?? "Failed to revoke", "error");
+        } finally {
+          setActionBusy(null);
+        }
+      },
+    });
   }
 
   function formatDate(dateStr: string | null | undefined): string {
@@ -113,7 +319,7 @@ export function AdminDashboard() {
   }
 
   const searchValue = searchTerm.trim().toLowerCase();
-  const visibleInstructors = instructors.filter((inst) => {
+  const visibleInstructors = displayList.filter((inst) => {
     if (!searchValue) return true;
     return [inst.displayName, inst.email, inst.affiliation]
       .filter(Boolean)
@@ -140,7 +346,7 @@ export function AdminDashboard() {
       <div className="admin-stats">
         <div className="card admin-stat">
           <p className="admin-stat-label">Pending</p>
-          <p className="admin-stat-value">{stats.instructorCounts.pending}</p>
+          <p className="admin-stat-value">{pendingCount}</p>
         </div>
         <div className="card admin-stat">
           <p className="admin-stat-label">Approved</p>
@@ -169,6 +375,7 @@ export function AdminDashboard() {
               className={`btn small ${tab === "pending" ? "secondary" : "outline"}`}
               onClick={() => setTab("pending")}
             >
+              {tab === "pending" && liveConnected && <span className="live-dot" />}
               Pending {pendingCount > 0 && `(${pendingCount})`}
             </button>
             <button
@@ -194,6 +401,18 @@ export function AdminDashboard() {
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Search instructors"
             />
+            <button
+              className="btn outline small icon-only"
+              onClick={() => loadData()}
+              title="Refresh"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 2v6h-6" />
+                <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
+                <path d="M3 22v-6h6" />
+                <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
+              </svg>
+            </button>
           </div>
         </div>
 
@@ -205,10 +424,21 @@ export function AdminDashboard() {
           </div>
         ) : visibleInstructors.length === 0 ? (
           <div className="admin-empty">
-            <h3>No instructors found</h3>
-            <p className="text-muted">
-              Try adjusting the filters or clearing the search.
-            </p>
+            {tab === "pending" ? (
+              <>
+                <h3>No pending applications</h3>
+                <p className="text-muted">
+                  New instructor applications will appear here in real time.
+                </p>
+              </>
+            ) : (
+              <>
+                <h3>No instructors found</h3>
+                <p className="text-muted">
+                  Try adjusting the filters or clearing the search.
+                </p>
+              </>
+            )}
           </div>
         ) : (
           <div className="table-wrap">
@@ -281,6 +511,32 @@ export function AdminDashboard() {
           </div>
         )}
       </div>
+
+      {/* Modal */}
+      {modal?.type === "confirm" && (
+        <ConfirmModal
+          title={modal.title}
+          message={modal.message}
+          confirmLabel={modal.confirmLabel}
+          confirmClass={modal.confirmClass}
+          onConfirm={() => modal.onConfirm()}
+          onCancel={() => setModal(null)}
+        />
+      )}
+      {modal?.type === "prompt" && (
+        <PromptModal
+          title={modal.title}
+          message={modal.message}
+          placeholder={modal.placeholder}
+          confirmLabel={modal.confirmLabel}
+          confirmClass={modal.confirmClass}
+          onConfirm={(v) => modal.onConfirm(v)}
+          onCancel={() => setModal(null)}
+        />
+      )}
+
+      {/* Toasts */}
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }

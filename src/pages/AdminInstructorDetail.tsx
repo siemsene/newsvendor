@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import type { InstructorStatus } from "../lib/types";
@@ -28,6 +28,102 @@ type SessionItem = {
   createdAt: string | null;
 };
 
+/* ===== Toast System ===== */
+type Toast = {
+  id: number;
+  message: string;
+  type: "success" | "error" | "info";
+  exiting?: boolean;
+};
+
+let toastId = 0;
+
+function ToastContainer({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: number) => void }) {
+  return (
+    <>
+      {toasts.map((t, i) => (
+        <div
+          key={t.id}
+          className={`toast ${t.type === "error" ? "toast-alert" : t.type === "success" ? "toast-success" : ""} ${t.exiting ? "toast-exit" : "toast-enter"}`}
+          style={{ bottom: 24 + i * 64 }}
+          onClick={() => onDismiss(t.id)}
+        >
+          {t.message}
+        </div>
+      ))}
+    </>
+  );
+}
+
+/* ===== Confirm Modal ===== */
+function ConfirmModal({
+  title,
+  message,
+  confirmLabel,
+  confirmClass,
+  onConfirm,
+  onCancel,
+}: {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  confirmClass?: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h3>{title}</h3>
+        <p>{message}</p>
+        <div className="modal-actions">
+          <button className="btn outline small" onClick={onCancel}>Cancel</button>
+          <button className={`btn small ${confirmClass ?? ""}`} onClick={onConfirm}>{confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ===== Prompt Modal ===== */
+function PromptModal({
+  title,
+  message,
+  placeholder,
+  confirmLabel,
+  confirmClass,
+  onConfirm,
+  onCancel,
+}: {
+  title: string;
+  message: string;
+  placeholder?: string;
+  confirmLabel: string;
+  confirmClass?: string;
+  onConfirm: (value: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState("");
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h3>{title}</h3>
+        <p>{message}</p>
+        <textarea
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder={placeholder ?? ""}
+          autoFocus
+        />
+        <div className="modal-actions">
+          <button className="btn outline small" onClick={onCancel}>Cancel</button>
+          <button className={`btn small ${confirmClass ?? ""}`} onClick={() => onConfirm(value)}>{confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function AdminInstructorDetail() {
   const { uid } = useParams<{ uid: string }>();
   const nav = useNavigate();
@@ -36,6 +132,38 @@ export function AdminInstructorDetail() {
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionBusy, setActionBusy] = useState(false);
+
+  // Modal state
+  const [modal, setModal] = useState<{
+    type: "confirm" | "prompt";
+    title: string;
+    message: string;
+    placeholder?: string;
+    confirmLabel: string;
+    confirmClass?: string;
+    onConfirm: (value?: string) => void;
+  } | null>(null);
+
+  // Toast state
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const toastTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+
+  const addToast = useCallback((message: string, type: Toast["type"] = "info") => {
+    const id = ++toastId;
+    setToasts((prev) => [...prev, { id, message, type }]);
+    const timer = setTimeout(() => {
+      setToasts((prev) => prev.map((t) => (t.id === id ? { ...t, exiting: true } : t)));
+      setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 300);
+    }, 4000);
+    toastTimers.current.set(id, timer);
+  }, []);
+
+  const dismissToast = useCallback((id: number) => {
+    const timer = toastTimers.current.get(id);
+    if (timer) clearTimeout(timer);
+    setToasts((prev) => prev.map((t) => (t.id === id ? { ...t, exiting: true } : t)));
+    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 300);
+  }, []);
 
   async function loadData() {
     if (!uid) return;
@@ -46,7 +174,7 @@ export function AdminInstructorDetail() {
       setSessions(res.data.sessions);
     } catch (e: any) {
       console.error("Failed to load instructor:", e);
-      alert(e?.message ?? "Failed to load instructor");
+      addToast(e?.message ?? "Failed to load instructor", "error");
       nav("/admin");
     } finally {
       setLoading(false);
@@ -58,48 +186,77 @@ export function AdminInstructorDetail() {
   }, [uid]);
 
   async function handleApprove() {
-    if (!uid || !confirm("Approve this instructor?")) return;
-    setActionBusy(true);
-    try {
-      await api.approveInstructor({ uid });
-      await loadData();
-    } catch (e: any) {
-      alert(e?.message ?? "Failed to approve");
-    } finally {
-      setActionBusy(false);
-    }
+    if (!uid) return;
+    setModal({
+      type: "confirm",
+      title: "Approve Instructor",
+      message: "Are you sure you want to approve this instructor? They will be able to create sessions immediately.",
+      confirmLabel: "Approve",
+      confirmClass: "success",
+      onConfirm: async () => {
+        setModal(null);
+        setActionBusy(true);
+        try {
+          await api.approveInstructor({ uid });
+          addToast("Instructor approved successfully", "success");
+          await loadData();
+        } catch (e: any) {
+          addToast(e?.message ?? "Failed to approve", "error");
+        } finally {
+          setActionBusy(false);
+        }
+      },
+    });
   }
 
   async function handleReject() {
     if (!uid) return;
-    const reason = prompt("Rejection reason (optional):");
-    if (reason === null) return;
-    setActionBusy(true);
-    try {
-      await api.rejectInstructor({ uid, reason: reason || undefined });
-      await loadData();
-    } catch (e: any) {
-      alert(e?.message ?? "Failed to reject");
-    } finally {
-      setActionBusy(false);
-    }
+    setModal({
+      type: "prompt",
+      title: "Reject Instructor",
+      message: "Provide a reason for rejection (optional):",
+      placeholder: "e.g. Incomplete application, unverified affiliation...",
+      confirmLabel: "Reject",
+      confirmClass: "danger",
+      onConfirm: async (reason) => {
+        setModal(null);
+        setActionBusy(true);
+        try {
+          await api.rejectInstructor({ uid, reason: reason || undefined });
+          addToast("Instructor rejected", "success");
+          await loadData();
+        } catch (e: any) {
+          addToast(e?.message ?? "Failed to reject", "error");
+        } finally {
+          setActionBusy(false);
+        }
+      },
+    });
   }
 
   async function handleRevoke() {
     if (!uid) return;
-    const reason = prompt("Revocation reason (optional):");
-    if (reason === null) return;
-    if (!confirm("This will end all their active sessions. Continue?")) return;
-    setActionBusy(true);
-    try {
-      const res = await api.revokeInstructorAccess({ uid, reason: reason || undefined });
-      alert(`Access revoked. ${res.data.sessionsEnded} sessions ended.`);
-      await loadData();
-    } catch (e: any) {
-      alert(e?.message ?? "Failed to revoke");
-    } finally {
-      setActionBusy(false);
-    }
+    setModal({
+      type: "prompt",
+      title: "Revoke Instructor Access",
+      message: "This will end all their active sessions. Provide a reason (optional):",
+      placeholder: "e.g. Terms violation, inactive account...",
+      confirmLabel: "Revoke Access",
+      confirmClass: "danger",
+      onConfirm: async (reason) => {
+        setModal(null);
+        setActionBusy(true);
+        try {
+          const res = await api.revokeInstructorAccess({ uid, reason: reason || undefined });
+          addToast(`Access revoked. ${res.data.sessionsEnded} session(s) ended.`, "success");
+          await loadData();
+        } catch (e: any) {
+          addToast(e?.message ?? "Failed to revoke", "error");
+        } finally {
+          setActionBusy(false);
+        }
+      },
+    });
   }
 
   function formatDate(dateStr: string | null | undefined): string {
@@ -286,6 +443,32 @@ export function AdminInstructorDetail() {
           </table>
         )}
       </div>
+
+      {/* Modal */}
+      {modal?.type === "confirm" && (
+        <ConfirmModal
+          title={modal.title}
+          message={modal.message}
+          confirmLabel={modal.confirmLabel}
+          confirmClass={modal.confirmClass}
+          onConfirm={() => modal.onConfirm()}
+          onCancel={() => setModal(null)}
+        />
+      )}
+      {modal?.type === "prompt" && (
+        <PromptModal
+          title={modal.title}
+          message={modal.message}
+          placeholder={modal.placeholder}
+          confirmLabel={modal.confirmLabel}
+          confirmClass={modal.confirmClass}
+          onConfirm={(v) => modal.onConfirm(v)}
+          onCancel={() => setModal(null)}
+        />
+      )}
+
+      {/* Toasts */}
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }

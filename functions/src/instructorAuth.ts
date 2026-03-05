@@ -64,9 +64,10 @@ export const registerInstructor = onCall(async (request) => {
 
         // Send notification to admin
         try {
-          await sendAdminNewApplicationNotification(displayName, email, affiliation);
+          const sent = await sendAdminNewApplicationNotification(displayName, email, affiliation);
+          console.log(`[AUTH] Admin notification for new instructor ${email}: ${sent ? "sent" : "skipped/failed"}`);
         } catch (emailErr) {
-          console.error("Failed to send admin notification email:", emailErr);
+          console.error(`[AUTH] Admin notification email error for ${email}:`, emailErr);
         }
 
         return { ok: true, status: "pending", isAdmin: false };

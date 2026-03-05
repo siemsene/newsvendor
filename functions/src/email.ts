@@ -69,44 +69,54 @@ function htmlToPlainText(html: string): string {
     .trim();
 }
 
-async function sendEmail(to: string, subject: string, html: string): Promise<void> {
+async function sendEmail(to: string, subject: string, html: string): Promise<boolean> {
   const apiKey = process.env.SMTP2GO_API_KEY;
-  if (!apiKey) {
-    console.warn("SMTP2GO_API_KEY not set, skipping email");
-    return;
+  if (!apiKey || apiKey === "your_api_key_here") {
+    console.warn(`[EMAIL] Skipped sending "${subject}" to ${to} — SMTP2GO_API_KEY not configured`);
+    return false;
   }
 
   const wrappedHtml = wrapHtmlBody(html);
   const plainText = htmlToPlainText(html);
 
-  const response = await fetch(SMTP2GO_API_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      api_key: apiKey,
-      to: [to],
-      sender: FROM_EMAIL,
-      subject,
-      html_body: wrappedHtml,
-      text_body: plainText,
-      custom_headers: [
-        {
-          header: "Reply-To",
-          value: REPLY_TO_EMAIL,
-        },
-        {
-          header: "X-Mailer",
-          value: "Newsvendor Game Notification System",
-        },
-      ],
-    }),
-  });
+  try {
+    const response = await fetch(SMTP2GO_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        api_key: apiKey,
+        to: [to],
+        sender: FROM_EMAIL,
+        subject,
+        html_body: wrappedHtml,
+        text_body: plainText,
+        custom_headers: [
+          {
+            header: "Reply-To",
+            value: REPLY_TO_EMAIL,
+          },
+          {
+            header: "X-Mailer",
+            value: "Newsvendor Game Notification System",
+          },
+        ],
+      }),
+    });
 
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`SMTP2GO API error: ${response.status} ${text}`);
+    if (!response.ok) {
+      const text = await response.text();
+      console.error(`[EMAIL] Failed to send "${subject}" to ${to} — SMTP2GO ${response.status}: ${text}`);
+      return false;
+    }
+
+    const result = await response.json();
+    console.log(`[EMAIL] Sent "${subject}" to ${to} — request_id: ${result?.request_id ?? "unknown"}`);
+    return true;
+  } catch (err) {
+    console.error(`[EMAIL] Error sending "${subject}" to ${to}:`, err);
+    return false;
   }
 }
 
@@ -114,8 +124,8 @@ export async function sendAdminNewApplicationNotification(
   instructorName: string,
   instructorEmail: string,
   affiliation: string
-): Promise<void> {
-  await sendEmail(
+): Promise<boolean> {
+  return sendEmail(
     ADMIN_EMAIL,
     "New Instructor Application - Newsvendor Game",
     `
@@ -143,8 +153,8 @@ export async function sendAdminNewApplicationNotification(
 export async function sendInstructorApprovalEmail(
   email: string,
   name: string
-): Promise<void> {
-  await sendEmail(
+): Promise<boolean> {
+  return sendEmail(
     email,
     "Your Instructor Account Has Been Approved - Newsvendor Game",
     `
@@ -161,8 +171,8 @@ export async function sendInstructorRejectionEmail(
   email: string,
   name: string,
   reason?: string
-): Promise<void> {
-  await sendEmail(
+): Promise<boolean> {
+  return sendEmail(
     email,
     "Instructor Application Update - Newsvendor Game",
     `
@@ -180,8 +190,8 @@ export async function sendInstructorRevocationEmail(
   email: string,
   name: string,
   reason?: string
-): Promise<void> {
-  await sendEmail(
+): Promise<boolean> {
+  return sendEmail(
     email,
     "Instructor Access Revoked - Newsvendor Game",
     `
@@ -197,7 +207,7 @@ export async function sendInstructorRevocationEmail(
 export async function sendAdminPendingApprovalsSummary(
   pendingCount: number,
   pendingInstructors: Array<{ name: string; email: string; affiliation: string }>
-): Promise<void> {
+): Promise<boolean> {
   const instructorRows = pendingInstructors
     .map(
       (i) => `
@@ -210,7 +220,7 @@ export async function sendAdminPendingApprovalsSummary(
     )
     .join("");
 
-  await sendEmail(
+  return sendEmail(
     ADMIN_EMAIL,
     `${pendingCount} Instructor Application${pendingCount === 1 ? "" : "s"} Pending - Newsvendor Game`,
     `
