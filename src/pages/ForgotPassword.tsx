@@ -35,7 +35,7 @@ export function ForgotPassword() {
   }
 
   return (
-    <div style={{ maxWidth: 400, margin: "0 auto", padding: 20 }}>
+    <div className="auth-page compact">
       <div className="card">
         <h2>Reset Password</h2>
         <p className="text-muted">Enter your email to receive a password reset link.</p>

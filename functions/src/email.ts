@@ -1,5 +1,5 @@
 const SMTP2GO_API_URL = "https://api.smtp2go.com/v3/email/send";
-const FROM_EMAIL = "Newsvendor Game <notifications@newsvendor.app>";
+const FROM_EMAIL = "Newsvendor Game <admin@edutool.org>";
 const REPLY_TO_EMAIL = "admin@edutool.org";
 const ADMIN_EMAIL = "siemsene@gmail.com";
 
@@ -105,14 +105,20 @@ async function sendEmail(to: string, subject: string, html: string): Promise<boo
       }),
     });
 
+    const result = await response.json();
+
     if (!response.ok) {
-      const text = await response.text();
-      console.error(`[EMAIL] Failed to send "${subject}" to ${to} — SMTP2GO ${response.status}: ${text}`);
+      console.error(`[EMAIL] Failed to send "${subject}" to ${to} — SMTP2GO ${response.status}: ${JSON.stringify(result)}`);
       return false;
     }
 
-    const result = await response.json();
-    console.log(`[EMAIL] Sent "${subject}" to ${to} — request_id: ${result?.request_id ?? "unknown"}`);
+    const failures = result?.data?.failures;
+    if (failures && failures.length > 0) {
+      console.error(`[EMAIL] SMTP2GO rejected "${subject}" to ${to} — failures: ${JSON.stringify(failures)}`);
+      return false;
+    }
+
+    console.log(`[EMAIL] Sent "${subject}" to ${to} — succeeded: ${result?.data?.succeeded}, request_id: ${result?.request_id ?? "unknown"}`);
     return true;
   } catch (err) {
     console.error(`[EMAIL] Error sending "${subject}" to ${to}:`, err);

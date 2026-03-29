@@ -16,12 +16,12 @@ export function profitForDay({
   return price * sold + salvage * leftover - cost * Q;
 }
 
-export function expandWeeklyOrdersToDays(ordersByWeek: Array<number | null>) {
+export function expandWeeklyOrdersToDays(ordersByWeek: Array<number | null>, daysPerWeek = 5) {
   const out: number[] = [];
   const weeks = ordersByWeek.length;
   for (let w = 0; w < weeks; w++) {
     const q = ordersByWeek[w] ?? 0;
-    for (let d = 0; d < 5; d++) out.push(q);
+    for (let d = 0; d < daysPerWeek; d++) out.push(q);
   }
   return out;
 }
@@ -33,6 +33,7 @@ export function computeWeeklyWhatIf({
   salvage,
   optimalQ,
   delta,
+  daysPerWeek = 5,
 }: {
   inGameDemands: number[];
   price: number;
@@ -40,12 +41,13 @@ export function computeWeeklyWhatIf({
   salvage: number;
   optimalQ: number;
   delta: number;
+  daysPerWeek?: number;
 }) {
-  const weeks = Math.floor(inGameDemands.length / 5);
+  const weeks = Math.floor(inGameDemands.length / daysPerWeek);
   const rows: Array<any> = [];
   for (let w = 0; w < weeks; w++) {
-    const start = w * 5;
-    const slice = inGameDemands.slice(start, start + 5);
+    const start = w * daysPerWeek;
+    const slice = inGameDemands.slice(start, start + daysPerWeek);
     const profit = (Q: number) => slice.reduce((acc, D) => acc + profitForDay({ D, Q, price, cost, salvage }), 0);
     rows.push({
       week: w + 1,

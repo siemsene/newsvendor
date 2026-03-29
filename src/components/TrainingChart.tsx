@@ -1,5 +1,5 @@
 import React from "react";
-import { ResponsiveContainer, ComposedChart, Bar, XAxis, YAxis, Tooltip, Line, DefaultTooltipContent } from "recharts";
+import { ResponsiveContainer, ComposedChart, Bar, XAxis, YAxis, Tooltip, Line, ReferenceLine, DefaultTooltipContent } from "recharts";
 import { histogram, normalCurvePoints } from "../lib/stats";
 
 export function TrainingChart({
@@ -7,11 +7,15 @@ export function TrainingChart({
   meanHat,
   sigmaHat,
   totalDays,
+  trainingCount,
+  daysPerWeek = 5,
 }: {
   demands: number[];
   meanHat: number;
   sigmaHat: number;
   totalDays: number;
+  trainingCount: number;
+  daysPerWeek?: number;
 }) {
   const bins = histogram(demands, 10);
   const curve = normalCurvePoints(meanHat, sigmaHat, bins.minX, bins.maxX, bins.data.length).map(
@@ -21,32 +25,58 @@ export function TrainingChart({
     ...b,
     curve: curve[i] ?? 0,
   }));
-  const series = demands.map((d, i) => ({ day: i + 1, demand: d }));
-  const latestIndex = series.length - 1;
-  const latestDot = (props: any) => {
+
+  // Split series by period. Share the first game point with the train line so they connect visually.
+  const series = demands.map((d, i) => {
+    const isTraining = i < trainingCount;
+    const isFirstGame = i === trainingCount;
+    return {
+      day: i + 1,
+      train: isTraining || isFirstGame ? d : null,
+      game: !isTraining ? d : null,
+    };
+  });
+
+  // X-axis ticks: "Training" at midpoint of training period, then W1..Wn at each game week start.
+  const trainMid = trainingCount > 0 ? Math.ceil(trainingCount / 2) : null;
+  const totalGameWeeks = Math.ceil((totalDays - trainingCount) / daysPerWeek);
+  const weekTicks = Array.from({ length: totalGameWeeks }, (_, w) => trainingCount + w * daysPerWeek + 1);
+  const ticks = [...(trainMid ? [trainMid] : []), ...weekTicks];
+
+  const tickFormatter = (value: number) => {
+    if (value === trainMid) return "Training";
+    const w = Math.round((value - trainingCount - 1) / daysPerWeek) + 1;
+    return `W${w}`;
+  };
+
+  // Latest dot on the game line only
+  const gameLatestIndex = demands.length > trainingCount ? demands.length - 1 : -1;
+  const gameLatestDot = (props: any) => {
     const { cx, cy, index } = props;
     if (typeof cx !== "number" || typeof cy !== "number") return <circle r={0} />;
-    if (index !== latestIndex) return <circle cx={cx} cy={cy} r={0} />;
+    if (index !== gameLatestIndex) return <circle cx={cx} cy={cy} r={0} />;
     return (
       <g>
-        <circle key={`latest-ring-${latestIndex}`} className="latest-dot-ring" cx={cx} cy={cy} r={10} />
+        <circle key={`latest-ring-${gameLatestIndex}`} className="latest-dot-ring" cx={cx} cy={cy} r={10} />
         <circle className="latest-dot" cx={cx} cy={cy} r={4} />
       </g>
     );
   };
 
   return (
-    <div className="card" style={{ display: "flex", flexDirection: "column" }}>
+    <div className="card training-chart-card">
       <h2>Demand Data</h2>
       <p className="small">
         Mean: <span className="mono">{meanHat.toFixed(2)}</span> · Std:{" "}
         <span className="mono">{sigmaHat.toFixed(2)}</span> · n={demands.length}
       </p>
-      <div style={{ height: 130 }}>
+      <div className="chart-with-ylabel">
+        <span className="chart-ylabel">Frequency</span>
+        <div className="chart-h-130">
         <ResponsiveContainer>
-          <ComposedChart data={chartData}>
-            <XAxis dataKey="label" tick={{ fontSize: 11, fill: "var(--muted)" }} interval={0} stroke="var(--border)" />
-            <YAxis tick={{ fontSize: 11, fill: "var(--muted)" }} stroke="var(--border)" />
+          <ComposedChart data={chartData} margin={{ bottom: 18, left: 4, right: 8 }}>
+            <XAxis dataKey="label" tick={{ fontSize: 11, fill: "var(--muted)" }} interval={0} stroke="var(--border)" label={{ value: "Demand", position: "insideBottom", offset: -8, fontSize: 11, fill: "var(--muted)" }} />
+            <YAxis width={32} tick={{ fontSize: 11, fill: "var(--muted)" }} stroke="var(--border)" />
             <Tooltip
               contentStyle={{ background: "var(--card)", borderColor: "var(--border)", borderRadius: "var(--radius-sm)", color: "var(--ink)" }}
               itemStyle={{ color: "var(--ink)" }}
@@ -59,14 +89,57 @@ export function TrainingChart({
             <Line type="monotone" dataKey="curve" stroke="var(--chart-line)" strokeWidth={2} dot={false} />
           </ComposedChart>
         </ResponsiveContainer>
+        </div>
       </div>
-      <div style={{ flex: 1, minHeight: 140, marginTop: 8 }}>
+      <div className="training-chart-series chart-with-ylabel">
+        <span className="chart-ylabel">Demand</span>
         <ResponsiveContainer>
-          <ComposedChart data={series}>
-            <XAxis dataKey="day" type="number" domain={[1, totalDays]} tick={{ fontSize: 11, fill: "var(--muted)" }} allowDataOverflow stroke="var(--border)" />
-            <YAxis tick={{ fontSize: 11, fill: "var(--muted)" }} stroke="var(--border)" />
-            <Tooltip contentStyle={{ background: "var(--card)", borderColor: "var(--border)", borderRadius: "var(--radius-sm)", color: "var(--ink)" }} />
-            <Line type="monotone" dataKey="demand" stroke="var(--chart-line)" strokeWidth={2} dot={latestDot} isAnimationActive={false} />
+          <ComposedChart data={series} margin={{ top: 4, right: 8, bottom: 4, left: 4 }}>
+            <XAxis
+              dataKey="day"
+              type="number"
+              domain={[1, totalDays]}
+              ticks={ticks}
+              tickFormatter={tickFormatter}
+              tick={{ fontSize: 11, fill: "var(--muted)" }}
+              allowDataOverflow
+              stroke="var(--border)"
+            />
+            <YAxis width={32} tick={{ fontSize: 11, fill: "var(--muted)" }} stroke="var(--border)" />
+            <Tooltip
+              contentStyle={{ background: "var(--card)", borderColor: "var(--border)", borderRadius: "var(--radius-sm)", color: "var(--ink)" }}
+              itemStyle={{ color: "var(--ink)" }}
+              formatter={(value: any, name: string) => [value, name === "train" ? "Training" : "Game"]}
+              labelFormatter={(label) => `Day ${label}`}
+            />
+            {trainingCount > 0 && (
+              <ReferenceLine
+                x={trainingCount + 0.5}
+                stroke="var(--border)"
+                strokeDasharray="4 3"
+                label={{ value: "Game →", position: "insideTopRight", fontSize: 10, fill: "var(--accent)", fontWeight: 600 }}
+              />
+            )}
+            <Line
+              type="monotone"
+              dataKey="train"
+              stroke="var(--muted)"
+              strokeWidth={1.5}
+              dot={false}
+              connectNulls={false}
+              isAnimationActive={false}
+              name="Training"
+            />
+            <Line
+              type="monotone"
+              dataKey="game"
+              stroke="var(--accent)"
+              strokeWidth={2}
+              dot={gameLatestDot}
+              connectNulls={false}
+              isAnimationActive={false}
+              name="Game"
+            />
           </ComposedChart>
         </ResponsiveContainer>
       </div>

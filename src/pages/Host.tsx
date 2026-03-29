@@ -4,21 +4,26 @@ import { db } from "../lib/firebase";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { useAuthState } from "../lib/useAuthState";
 import type { SessionPublic } from "../lib/types";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { probit } from "../lib/stats";
+import { GuideDownloadButtons } from "../components/GuideDownloadButtons";
 
 export function Host() {
   const { user, isApprovedInstructor, isAdmin } = useAuthState();
+  const navigate = useNavigate();
 
   const [params, setParams] = useState({
-    demandMu: 50,
-    demandSigma: 20,
-    price: 1.0,
-    cost: 0.2,
-    salvage: 0.0,
+    demandMu: 100,
+    demandSigma: 40,
+    price: 4,
+    cost: 0.5,
+    salvage: 0,
     weeks: 10,
+    daysPerWeek: 5,
+    asyncMode: false,
+    noDragons: false,
   });
 
-  const [created, setCreated] = useState<{ sessionId: string; code: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string>("");
   const [listMsg, setListMsg] = useState<string>("");
@@ -58,7 +63,7 @@ export function Host() {
     try {
       const weeks = Math.max(1, Math.min(52, Math.round(Number(params.weeks ?? 10))));
       const res = await api.createSession({ ...params, weeks });
-      setCreated(res.data);
+      navigate(`/host/session/${res.data.sessionId}`);
     } catch (e: any) {
       console.error(e);
       setMsg(e?.message ?? "Create session failed");
@@ -102,16 +107,16 @@ export function Host() {
   return (
     <div className="grid two">
       <div className="card">
-        <div className="row" style={{ marginBottom: 12 }}>
-          <h2 style={{ margin: 0 }}>Create New Session</h2>
+        <div className="row mb-12">
+          <h2 className="m-0">Create New Session</h2>
           {isApprovedInstructor && <span className="badge success">{isAdmin ? "Admin" : "Instructor"}</span>}
         </div>
         <p className="small">Set the demand model, pricing, and duration before you launch.</p>
 
         <div className="hr" />
 
-        <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
-          <h3 style={{ margin: 0 }}>Demand Distribution</h3>
+        <div className="row between baseline">
+          <h3 className="m-0">Demand Distribution</h3>
           <span className="small">Training + in-game demand draws</span>
         </div>
         <div className="grid two">
@@ -119,6 +124,7 @@ export function Host() {
             <label>Mean (mu)</label>
             <input
               type="number"
+              title="Mean demand"
               value={params.demandMu}
               onChange={(e) => setParams((p) => ({ ...p, demandMu: Number(e.target.value) }))}
             />
@@ -127,40 +133,42 @@ export function Host() {
             <label>Std Deviation (sigma)</label>
             <input
               type="number"
+              title="Standard deviation of demand"
               value={params.demandSigma}
               onChange={(e) => setParams((p) => ({ ...p, demandSigma: Number(e.target.value) }))}
             />
           </div>
         </div>
 
-        <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginTop: 16 }}>
-          <h3 style={{ margin: 0 }}>Pricing</h3>
+        <div className="row between baseline mt-16">
+          <h3 className="m-0">Pricing</h3>
           <span className="small">All values are per-unit</span>
         </div>
         <div className="grid three">
           <div>
             <label>Sales Price</label>
-            <input type="number" step="0.01" value={params.price} onChange={(e) => setParams((p) => ({ ...p, price: Number(e.target.value) }))} />
+            <input type="number" title="Sales price per unit" step="0.01" value={params.price} onChange={(e) => setParams((p) => ({ ...p, price: Number(e.target.value) }))} />
           </div>
           <div>
             <label>Unit Cost</label>
-            <input type="number" step="0.01" value={params.cost} onChange={(e) => setParams((p) => ({ ...p, cost: Number(e.target.value) }))} />
+            <input type="number" title="Unit cost" step="0.01" value={params.cost} onChange={(e) => setParams((p) => ({ ...p, cost: Number(e.target.value) }))} />
           </div>
           <div>
             <label>Salvage Value</label>
-            <input type="number" step="0.01" value={params.salvage} onChange={(e) => setParams((p) => ({ ...p, salvage: Number(e.target.value) }))} />
+            <input type="number" title="Salvage value per unit" step="0.01" value={params.salvage} onChange={(e) => setParams((p) => ({ ...p, salvage: Number(e.target.value) }))} />
           </div>
         </div>
 
-        <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginTop: 16 }}>
-          <h3 style={{ margin: 0 }}>Duration</h3>
-          <span className="small">{params.weeks * 5} total days</span>
+        <div className="row between baseline mt-16">
+          <h3 className="m-0">Duration</h3>
+          <span className="small">{params.weeks * params.daysPerWeek} total days</span>
         </div>
-        <div className="grid two">
+        <div className="grid three">
           <div>
             <label>Weeks in Game</label>
             <input
               type="number"
+              title="Number of weeks"
               min={1}
               max={52}
               step={1}
@@ -169,11 +177,62 @@ export function Host() {
             />
           </div>
           <div>
+            <label>Days per Week</label>
+            <input
+              type="number"
+              title="Number of days per week"
+              min={1}
+              max={7}
+              step={1}
+              value={params.daysPerWeek}
+              onChange={(e) => {
+                const n = Math.round(Number(e.target.value));
+                if (e.target.value !== "" && Number.isInteger(n) && n >= 1 && n <= 7) {
+                  setParams((p) => ({ ...p, daysPerWeek: n }));
+                }
+              }}
+              onBlur={(e) => {
+                const n = Math.round(Number(e.target.value));
+                setParams((p) => ({ ...p, daysPerWeek: Number.isFinite(n) ? Math.max(1, Math.min(7, n)) : p.daysPerWeek }));
+              }}
+            />
+          </div>
+          <div>
             <label>Schedule</label>
-            <div className="small" style={{ padding: "12px 0" }}>
-              {params.weeks} weeks x 5 days = <span className="mono">{params.weeks * 5}</span> decisions
+            <div className="small schedule-note">
+              {params.weeks} weeks × {params.daysPerWeek} days/week = <span className="mono">{params.weeks * params.daysPerWeek}</span> in-game days, <span className="mono">{params.weeks}</span> decisions
             </div>
           </div>
+        </div>
+
+        <div className="hr" />
+
+        <div className="row between baseline mt-16">
+          <h3 className="m-0">Options</h3>
+        </div>
+        <div className="grid two">
+          <label className={`option-card${params.asyncMode ? " selected" : ""}`}>
+            <div className="option-card-header">
+              <input
+                type="checkbox"
+                checked={params.asyncMode}
+                onChange={(e) => setParams((p) => ({ ...p, asyncMode: e.target.checked }))}
+              />
+              <span className="option-card-title">Async Mode</span>
+            </div>
+            <p className="option-card-desc">Players work through all weeks at their own pace. Reveal the leaderboard when everyone is done.</p>
+          </label>
+          <label className={`option-card${params.noDragons ? " selected" : ""}`}>
+            <div className="option-card-header">
+              <input
+                type="checkbox"
+                checked={params.noDragons}
+                onChange={(e) => setParams((p) => ({ ...p, noDragons: e.target.checked }))}
+              />
+              <span className="option-card-title">No Dragons</span>
+            </div>
+            <p className="option-card-desc">Hides the dragon mascot images from the player view.</p>
+          </label>
         </div>
 
         <div className="hr" />
@@ -185,37 +244,25 @@ export function Host() {
           {!isApprovedInstructor && <span className="small text-danger">Instructor access required.</span>}
         </div>
 
-        {created && (
-          <>
-            <div className="hr" />
-            <div className="card success-highlight" style={{ marginTop: 8 }}>
-              <p style={{ margin: 0 }}>
-                Session created! Share this code with players:
-              </p>
-              <div className="session-code" style={{ marginTop: 12 }}>{created.code}</div>
-            </div>
-          </>
-        )}
-
         {msg && <div className="hr" />}
         {msg && <p className="text-danger">{msg}</p>}
       </div>
 
       <div className="card">
-        <div className="row" style={{ marginBottom: 8 }}>
-          <h2 style={{ margin: 0 }}>Your Sessions</h2>
+        <div className="row mb-8">
+          <h2 className="m-0">Your Sessions</h2>
           <span className="badge">{activeSessions.length} active</span>
         </div>
         <p className="small">Click to open the host control room.</p>
-        <div style={{ background: "var(--warning-bg, #fff3cd)", border: "1px solid var(--warning-border, #ffc107)", borderRadius: 6, padding: "8px 12px", marginBottom: 12 }}>
-          <p className="small" style={{ margin: 0, color: "var(--warning-text, #856404)" }}>
+        <div className="warning-notice">
+          <p className="small">
             Sessions are automatically deleted after 30 days.
           </p>
         </div>
         <div className="hr" />
         {listMsg && <p className="text-danger">{listMsg}</p>}
         {activeSessions.length === 0 ? (
-          <div style={{ textAlign: "center", padding: "30px 0" }}>
+          <div className="empty-state">
             <p className="small">No active sessions. Create one to get started.</p>
           </div>
         ) : (
@@ -231,9 +278,9 @@ export function Host() {
               return (
                 <div key={s.id} className="player-card">
                   <div className="row">
-                    <div style={{ flex: 1 }}>
-                      <div className="row" style={{ gap: 8, marginBottom: 4 }}>
-                        <span className="mono font-bold" style={{ fontSize: 16 }}>{s.data.code}</span>
+                    <div className="flex-1">
+                      <div className="row gap-8 mb-4">
+                        <span className="mono font-bold text-md">{s.data.code}</span>
                         <span className={`status-dot ${statusConfig.dotClass}`} />
                       </div>
                       <div className="small">
@@ -264,8 +311,8 @@ export function Host() {
         {finishedSessions.length > 0 && (
           <>
             <div className="hr" />
-            <div className="row" style={{ marginBottom: 8 }}>
-              <h3 style={{ margin: 0 }}>Completed Sessions</h3>
+            <div className="row mb-8">
+              <h3 className="m-0">Completed Sessions</h3>
               <span className="badge">{finishedSessions.length} total</span>
             </div>
             <p className="small">Open to review, or delete if no longer needed.</p>
@@ -273,9 +320,9 @@ export function Host() {
               {finishedSessions.map((s) => (
                 <div key={s.id} className="player-card">
                   <div className="row">
-                    <div style={{ flex: 1 }}>
-                      <div className="row" style={{ gap: 8, marginBottom: 4 }}>
-                        <span className="mono font-bold" style={{ fontSize: 16 }}>{s.data.code}</span>
+                    <div className="flex-1">
+                      <div className="row gap-8 mb-4">
+                        <span className="mono font-bold text-md">{s.data.code}</span>
                         <span className="status-dot finished" />
                       </div>
                       <div className="small">
@@ -308,39 +355,62 @@ export function Host() {
         <h2>Setup Summary</h2>
         <p className="small">A quick snapshot of the configuration you are about to launch.</p>
         <div className="hr" />
-        <div className="kpi">
-          <div className="pill accent">
-            Mean: <span className="mono">{params.demandMu}</span>
-          </div>
-          <div className="pill">
-            Std: <span className="mono">{params.demandSigma}</span>
-          </div>
-          <div className="pill">
-            Weeks: <span className="mono">{params.weeks}</span>
-          </div>
-          <div className="pill">
-            Days: <span className="mono">{params.weeks * 5}</span>
-          </div>
-        </div>
+        {(() => {
+          const underage = params.price - params.cost;
+          const overage = params.cost - params.salvage;
+          const cf = overage + underage > 0 ? underage / (underage + overage) : null;
+          const optQ = cf !== null && params.demandSigma > 0
+            ? Math.round(params.demandMu + params.demandSigma * probit(cf))
+            : cf !== null ? Math.round(params.demandMu) : null;
+          return (
+            <>
+              <div className="kpi">
+                <div className="pill accent">
+                  Mean: <span className="mono">{params.demandMu}</span>
+                </div>
+                <div className="pill">
+                  Std: <span className="mono">{params.demandSigma}</span>
+                </div>
+                <div className="pill">
+                  Weeks: <span className="mono">{params.weeks}</span>
+                </div>
+                <div className="pill">
+                  Days: <span className="mono">{params.weeks * params.daysPerWeek}</span>
+                </div>
+              </div>
+              <div className="hr" />
+              <div className="grid two">
+                <div className="card highlight">
+                  <h3>Margins</h3>
+                  <p className="small mt-6">
+                    Sell: <span className="mono">${params.price.toFixed(2)}</span> / Cost:{" "}
+                    <span className="mono">${params.cost.toFixed(2)}</span> / Salvage:{" "}
+                    <span className="mono">${params.salvage.toFixed(2)}</span>
+                  </p>
+                  {cf !== null && (
+                    <p className="small">
+                      Critical fractile: <span className="mono">{(cf * 100).toFixed(1)}%</span>
+                      {optQ !== null && <> · Optimal Q: <span className="mono">{optQ}</span></>}
+                    </p>
+                  )}
+                </div>
+                <div className="card">
+                  <h3>Notes</h3>
+                  <p className="small">
+                    You can redraw the distribution before starting if you want a different dataset.
+                  </p>
+                </div>
+              </div>
+            </>
+          );
+        })()}
+      </div>
+
+      <div className="card">
+        <h2>Guides &amp; Resources</h2>
+        <p className="small">Download PDF guides for yourself and your students.</p>
         <div className="hr" />
-        <div className="grid two">
-          <div className="card highlight">
-            <h3>Margins</h3>
-            <p className="small" style={{ marginTop: 6 }}>
-              Sell: <span className="mono">${params.price.toFixed(2)}</span> / Cost:{" "}
-              <span className="mono">${params.cost.toFixed(2)}</span>
-            </p>
-            <p className="small">
-              Salvage: <span className="mono">${params.salvage.toFixed(2)}</span>
-            </p>
-          </div>
-          <div className="card">
-            <h3>Notes</h3>
-            <p className="small">
-              You can redraw the distribution before starting if you want a different dataset.
-            </p>
-          </div>
-        </div>
+        <GuideDownloadButtons role="instructor" />
       </div>
     </div>
   );

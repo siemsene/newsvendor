@@ -16,6 +16,7 @@ type InstructorListItem = {
   lastLoginAt?: string | null;
   sessionsCreated: number;
   activeSessions: number;
+  playersCompleted: number;
 };
 
 /* ===== Toast System ===== */
@@ -130,6 +131,7 @@ export function AdminDashboard() {
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState("");
+  const [downloadBusy, setDownloadBusy] = useState(false);
 
   // Modal state
   const [modal, setModal] = useState<{
@@ -185,6 +187,7 @@ export function AdminDashboard() {
             lastLoginAt: d.lastLoginAt?.toDate?.()?.toISOString() ?? null,
             sessionsCreated: d.sessionsCreated ?? 0,
             activeSessions: d.activeSessions ?? 0,
+            playersCompleted: d.playersCompleted ?? 0,
           };
         });
         pending.sort((a, b) => {
@@ -203,6 +206,38 @@ export function AdminDashboard() {
     );
     return () => unsub();
   }, []);
+
+  async function downloadApprovedEmails() {
+    setDownloadBusy(true);
+    try {
+      const all: InstructorListItem[] = [];
+      let lastUid: string | null = null;
+      while (true) {
+        const res: { data: { instructors: InstructorListItem[]; hasMore: boolean; lastUid: string | null } } = await api.listAllInstructors({ status: "approved", limit: 100, startAfterUid: lastUid ?? undefined });
+        all.push(...res.data.instructors);
+        if (!res.data.hasMore) break;
+        lastUid = res.data.lastUid;
+      }
+      const header = "Email,Name,Affiliation";
+      const rows = all.map((i) => [
+        `"${i.email.replace(/"/g, '""')}"`,
+        `"${i.displayName.replace(/"/g, '""')}"`,
+        `"${(i.affiliation ?? "").replace(/"/g, '""')}"`,
+      ].join(","));
+      const csv = [header, ...rows].join("\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "approved_instructors.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      addToast(e?.message ?? "Download failed", "error");
+    } finally {
+      setDownloadBusy(false);
+    }
+  }
 
   // Load stats and "all" tab data
   const loadData = useCallback(async () => {
@@ -402,6 +437,18 @@ export function AdminDashboard() {
               placeholder="Search instructors"
             />
             <button
+              className={`btn outline small icon-only${downloadBusy ? " loading" : ""}`}
+              onClick={downloadApprovedEmails}
+              disabled={downloadBusy}
+              title="Download approved instructor emails (CSV)"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+            </button>
+            <button
               className="btn outline small icon-only"
               onClick={() => loadData()}
               title="Refresh"
@@ -473,6 +520,7 @@ export function AdminDashboard() {
                         {inst.sessionsCreated} / {inst.activeSessions}
                       </span>{" "}
                       active
+                      <div className="text-muted small">{inst.playersCompleted ?? 0} players completed</div>
                     </td>
                     <td className="admin-col-applied">{formatDate(inst.appliedAt)}</td>
                     <td className="admin-col-actions" onClick={(e) => e.stopPropagation()}>

@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend, ReferenceLine } from "recharts";
 import type { SessionPublic, PlayerDoc } from "../lib/types";
 import { expandWeeklyOrdersToDays } from "../lib/gameMath";
 
@@ -7,15 +7,18 @@ export function EndgameCharts({
   session,
   players,
   avgOrderPerDayOverride,
+  playerProfit,
 }: {
   session: SessionPublic;
   players?: PlayerDoc[];
   avgOrderPerDayOverride?: number[];
+  playerProfit?: number | null;
 }) {
   const days = session.revealedDemands ?? [];
   const optimalQ = session.optimalQ ?? 0;
   const weeks = session.weeks ?? 10;
-  const totalDays = weeks * 5;
+  const daysPerWeek = session.daysPerWeek ?? 5;
+  const totalDays = weeks * daysPerWeek;
   const rawReveal = Number(session.revealIndex);
   const revealIndex = Number.isFinite(rawReveal) ? Math.max(0, Math.round(rawReveal)) : days.length;
   const dayCount = Math.min(days.length, totalDays, revealIndex);
@@ -27,7 +30,7 @@ export function EndgameCharts({
     }
     const sourcePlayers = players ?? [];
     if (!sourcePlayers.length) return Array.from({ length: totalDays }, () => 0);
-    const perPlayer = sourcePlayers.map((p) => expandWeeklyOrdersToDays(p.ordersByWeek ?? []));
+    const perPlayer = sourcePlayers.map((p) => expandWeeklyOrdersToDays(p.ordersByWeek ?? [], daysPerWeek));
     const n = perPlayer.length || 1;
     return Array.from({ length: totalDays }, (_, i) => {
       const s = perPlayer.reduce((acc, arr) => acc + (arr[i] ?? 0), 0);
@@ -42,10 +45,10 @@ export function EndgameCharts({
   }, [playedDays]);
 
   const lineData = useMemo(() => {
-    const weeksCount = Math.ceil(dayCount / 5);
+    const weeksCount = Math.ceil(dayCount / daysPerWeek);
     return Array.from({ length: weeksCount }, (_, i) => {
-      const start = i * 5;
-      const end = Math.min(start + 5, dayCount);
+      const start = i * daysPerWeek;
+      const end = Math.min(start + daysPerWeek, dayCount);
       const weekOrders = avgOrderPerDay.slice(start, end);
       const wAvgOrder = weekOrders.length ? weekOrders.reduce((a, b) => a + b, 0) / weekOrders.length : 0;
 
@@ -85,7 +88,7 @@ export function EndgameCharts({
     <div className="grid two">
       <div className="card">
         <h2>Weekly time series (avg demand, optimal, avg order)</h2>
-        <div style={{ height: 320 }}>
+        <div className="chart-h-320">
           <ResponsiveContainer>
             <LineChart data={lineData} margin={{ bottom: 15 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
@@ -107,7 +110,7 @@ export function EndgameCharts({
       <div className="card">
         <h2>In-game payoff curve</h2>
         <p className="small">Profit across all in-game days vs. order quantity (Q).</p>
-        <div style={{ height: 320 }}>
+        <div className="chart-h-320">
           <ResponsiveContainer>
             <LineChart data={payoffCurve}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
@@ -122,6 +125,15 @@ export function EndgameCharts({
                 }}
               />
               <Line type="monotone" dataKey="profit" dot={false} stroke="var(--accent)" strokeWidth={2} name="Profit" />
+              {playerProfit != null && (
+                <ReferenceLine
+                  y={playerProfit}
+                  stroke="var(--success)"
+                  strokeWidth={2}
+                  strokeDasharray="5 3"
+                  label={{ value: `Your profit: ${Math.round(playerProfit)}`, position: "insideTopLeft", fontSize: 11, fill: "var(--success)", fontWeight: 600 }}
+                />
+              )}
             </LineChart>
           </ResponsiveContainer>
         </div>

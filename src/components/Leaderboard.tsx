@@ -45,8 +45,8 @@ export function Leaderboard({ players, rows }: { players?: PlayerDoc[]; rows?: L
 
   return (
     <div className="card">
-      <div className="row" style={{ marginBottom: 8 }}>
-        <h2 style={{ margin: 0 }}>Leaderboard</h2>
+      <div className="row mb-8">
+        <h2 className="m-0">Leaderboard</h2>
         <span className="badge">{computedRows.length} players</span>
       </div>
       <p className="small">
@@ -55,14 +55,14 @@ export function Leaderboard({ players, rows }: { players?: PlayerDoc[]; rows?: L
       </p>
 
       <div className="hr" />
-      <div style={{ overflowX: "auto", maxHeight: 500, overflowY: "auto" }}>
+      <div className="table-scroll">
         <table>
           <thead>
             <tr>
-              <th style={{ width: 60 }}>Rank</th>
+              <th className="col-60">Rank</th>
               <th>Baker</th>
-              <th style={{ textAlign: "right" }}>Profit</th>
-              <th style={{ textAlign: "right" }}>Avg Order</th>
+              <th className="text-right">Profit</th>
+              <th className="text-right">Avg Order</th>
             </tr>
           </thead>
           <tbody>
@@ -72,14 +72,14 @@ export function Leaderboard({ players, rows }: { players?: PlayerDoc[]; rows?: L
               const profitColor = r.profit >= 0 ? "var(--success)" : "var(--danger)";
               return (
                 <tr key={r.uid} className={isTop3 ? "highlight" : ""}>
-                  <td className="mono" style={{ fontWeight: isTop3 ? 700 : 400 }}>
+                  <td className={`mono${isTop3 ? " font-bold" : ""}`}>
                     {rankMedals[rank] ?? rank}
                   </td>
-                  <td style={{ fontWeight: isTop3 ? 600 : 400 }}>{r.name}</td>
-                  <td className="mono" style={{ textAlign: "right", color: profitColor, fontWeight: 600 }}>
+                  <td className={isTop3 ? "font-semi" : ""}>{r.name}</td>
+                  <td className="mono text-right font-semi" style={{ color: profitColor }}>
                     {r.profit >= 0 ? "+" : ""}{r.profit.toFixed(2)}
                   </td>
-                  <td className="mono" style={{ textAlign: "right" }}>{r.avgOrder.toFixed(1)}</td>
+                  <td className="mono text-right">{r.avgOrder.toFixed(1)}</td>
                 </tr>
               );
             })}
@@ -87,7 +87,7 @@ export function Leaderboard({ players, rows }: { players?: PlayerDoc[]; rows?: L
         </table>
       </div>
       {hasMore && (
-        <div style={{ marginTop: 16, textAlign: "center" }}>
+        <div className="mt-16 text-center">
           <button className="btn ghost" onClick={() => setShowAll((s) => !s)}>
             {showAll ? "Show top 50 only" : `Show all ${computedRows.length} players`}
           </button>

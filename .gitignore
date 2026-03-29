@@ -14,6 +14,10 @@ hosting/.cache
 /functions/lib/
 /functions/.env
 /functions/package-lock.json
+/functions/functions.yaml
+
+# TypeScript build cache
+tsconfig.tsbuildinfo
 
 # Firebase Emulators
 /firebase-*.zip

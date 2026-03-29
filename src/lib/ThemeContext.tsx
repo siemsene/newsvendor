@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
+import { loadStoredString, saveStoredString } from "./browserStorage";
 
 type Theme = "light" | "dark";
 
@@ -11,12 +12,12 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
     const [theme, setTheme] = useState<Theme>(() => {
-        const saved = localStorage.getItem("theme");
+        const saved = loadStoredString("theme");
         return (saved as Theme) || "dark";
     });
 
     useEffect(() => {
-        localStorage.setItem("theme", theme);
+        saveStoredString("theme", theme);
         if (theme === "light") {
             document.body.classList.add("light-mode");
         } else {

@@ -17,6 +17,7 @@ export type InstructorDoc = {
   lastLoginAt?: any;
   sessionsCreated: number;
   activeSessions: number;
+  playersCompleted: number;
 };
 
 export type SessionStatus = "lobby" | "training" | "ordering" | "revealing" | "finished";
@@ -48,6 +49,11 @@ export type SessionPublic = {
 
   optimalQ: number;
   weeks: number;
+  daysPerWeek?: number;
+  asyncMode?: boolean;
+  noDragons?: boolean;
+  submittedCount?: number;
+  weekSubmissions?: Record<string, number>;
   showLeaderboard?: boolean;
   drawFailed?: boolean;
   leaderboard?: LeaderboardRow[];
@@ -67,4 +73,5 @@ export type PlayerDoc = {
   submittedWeek?: number | null;
   lastSeenAt?: any;
   lastNudgedAt?: any;
+  revealedDemands?: number[];
 };

@@ -47,6 +47,17 @@ export function histogram(values: number[], binCount: number) {
   return { data: bins, minX: min, maxX: max, scaleToHistogram };
 }
 
+// Rational approximation of the inverse normal CDF (Abramowitz & Stegun 26.2.17)
+export function probit(p: number): number {
+  if (p <= 0) return -Infinity;
+  if (p >= 1) return Infinity;
+  const q = p < 0.5 ? p : 1 - p;
+  const t = Math.sqrt(-2 * Math.log(q));
+  const z = t - (2.515517 + 0.802853 * t + 0.010328 * t * t) /
+    (1 + 1.432788 * t + 0.189269 * t * t + 0.001308 * t * t * t);
+  return p < 0.5 ? -z : z;
+}
+
 function normalPdf(x: number, mu: number, sigma: number) {
   const z = (x - mu) / sigma;
   return (1 / (sigma * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * z * z);

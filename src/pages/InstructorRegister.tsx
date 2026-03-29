@@ -63,7 +63,7 @@ export function InstructorRegister() {
   }
 
   return (
-    <div style={{ maxWidth: 500, margin: "0 auto", padding: 20 }}>
+    <div className="auth-page regular">
       <div className="card">
         <h2>Apply for Instructor Access</h2>
         <p className="text-muted">
@@ -117,11 +117,11 @@ export function InstructorRegister() {
             required
           />
 
-          <div style={{ marginTop: 24, padding: "16px", background: "var(--card-bg)", borderRadius: 8, border: "1px solid var(--border)" }}>
+          <div style={{ marginTop: 24, padding: "16px", background: "var(--card)", borderRadius: 8, border: "1px solid var(--border)" }}>
             <p style={{ margin: "0 0 12px 0", fontWeight: 600, fontSize: "0.95rem" }}>
               Terms of Use
             </p>
-            <div style={{ marginBottom: 12, fontSize: "0.85rem", color: "var(--text-muted)", lineHeight: 1.5 }}>
+            <div style={{ marginBottom: 12, fontSize: "0.85rem", color: "var(--muted)", lineHeight: 1.5 }}>
               <p style={{ margin: "0 0 8px 0" }}>By creating an account, I acknowledge that:</p>
               <ol style={{ margin: 0, paddingLeft: 20 }}>
                 <li style={{ marginBottom: 6 }}>

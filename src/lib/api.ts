@@ -34,6 +34,7 @@ type InstructorListItem = {
   lastLoginAt?: string | null;
   sessionsCreated: number;
   activeSessions: number;
+  playersCompleted: number;
 };
 
 // Session list item
@@ -112,7 +113,7 @@ export const api = {
 
   // Original session functions
   createSession: httpsCallable<
-    { demandMu: number; demandSigma: number; price: number; cost: number; salvage: number; weeks: number },
+    { demandMu: number; demandSigma: number; price: number; cost: number; salvage: number; weeks: number; daysPerWeek?: number; asyncMode?: boolean; noDragons?: boolean },
     { sessionId: string; code: string }
   >(functions, "createSession"),
 
@@ -124,10 +125,10 @@ export const api = {
     "joinSession"
   ),
 
-  submitOrder: httpsCallable<{ sessionId: string; weekIndex: number; orderQty: number }, { ok: boolean }>(
-    functions,
-    "submitOrder"
-  ),
+  submitOrder: httpsCallable<
+    { sessionId: string; weekIndex: number; orderQty: number },
+    { ok: boolean; asyncReveal?: { demands: number[]; profits: number[]; cumulativeProfit: number; finished: boolean } }
+  >(functions, "submitOrder"),
 
   advanceReveal: httpsCallable<{ sessionId: string }, { ok: boolean; revealIndex: number }>(
     functions,

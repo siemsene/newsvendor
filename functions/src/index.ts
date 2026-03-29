@@ -26,9 +26,9 @@ export {
 } from "./admin";
 
 admin.initializeApp();
-const db = admin.firestore();
-
 setGlobalOptions({ region: "us-central1" });
+
+const db = admin.firestore();
 
 function requireAuth(context: any) {
   if (!context.auth) throw new HttpsError("unauthenticated", "Please sign in.");
@@ -42,10 +42,10 @@ function makeCode() {
   return out;
 }
 
-function expandWeeklyOrdersToDays(ordersByWeek: Array<number | null>, totalDays: number) {
+function expandWeeklyOrdersToDays(ordersByWeek: Array<number | null>, totalDays: number, daysPerWeek = 5) {
   const out: number[] = [];
   for (let i = 0; i < totalDays; i++) {
-    const weekIndex = Math.floor(i / 5);
+    const weekIndex = Math.floor(i / daysPerWeek);
     const q = ordersByWeek[weekIndex];
     out.push(typeof q === "number" ? q : 0);
   }
@@ -60,6 +60,9 @@ async function createSessionWithUniqueCode(payload: {
   cost: number;
   salvage: number;
   weeks: number;
+  daysPerWeek: number;
+  asyncMode: boolean;
+  noDragons: boolean;
   dataset: { training: number[]; inGame: number[]; optimalQ: number };
   seed: number;
   drawFailed: boolean;
@@ -88,6 +91,7 @@ async function createSessionWithUniqueCode(payload: {
           cost: payload.cost,
           salvage: payload.salvage,
           weeks: payload.weeks,
+          daysPerWeek: payload.daysPerWeek,
 
           status: "training",
           weekIndex: 0,
@@ -97,9 +101,12 @@ async function createSessionWithUniqueCode(payload: {
           revealedDemands: [],
 
           optimalQ: payload.dataset.optimalQ,
+          asyncMode: payload.asyncMode,
+          noDragons: payload.noDragons,
           showLeaderboard: false,
           drawFailed: payload.drawFailed,
           playersCount: 0,
+          submittedCount: 0,
           leaderboard: [],
         });
 
@@ -134,13 +141,16 @@ export const createSession = onCall(async (request) => {
   const cost = Number(request.data?.cost ?? 0.2);
   const salvage = Number(request.data?.salvage ?? 0.0);
   const weeks = Math.round(Number(request.data?.weeks ?? 10));
+  const daysPerWeek = Math.max(1, Math.min(7, Math.round(Number(request.data?.daysPerWeek ?? 5))));
+  const asyncMode = Boolean(request.data?.asyncMode ?? false);
+  const noDragons = Boolean(request.data?.noDragons ?? false);
 
   if (!(demandSigma > 0)) throw new HttpsError("invalid-argument", "demandSigma must be > 0");
   if (!(price > 0)) throw new HttpsError("invalid-argument", "price must be > 0");
   if (!(weeks >= 1 && weeks <= 52)) throw new HttpsError("invalid-argument", "weeks must be between 1 and 52");
 
   const seed = Math.floor(Math.random() * 2 ** 31);
-  const nGame = weeks * 5;
+  const nGame = weeks * daysPerWeek;
   const dataset = generateDemandDataset(
     { mu: demandMu, sigma: demandSigma, nTrain: 50, nGame, price, cost, salvage },
     seed
@@ -154,6 +164,9 @@ export const createSession = onCall(async (request) => {
     cost,
     salvage,
     weeks,
+    daysPerWeek,
+    asyncMode,
+    noDragons,
     dataset,
     seed,
     drawFailed,
@@ -197,6 +210,7 @@ export const joinSession = onCall(async (request) => {
     if (!sessionSnap.exists) throw new HttpsError("not-found", "Session not found.");
     const session = sessionSnap.data() as any;
     const weeks = Math.round(Number(session?.weeks ?? 10));
+    const daysPerWeek = Math.max(1, Math.round(Number(session?.daysPerWeek ?? 5)));
 
     const playerSnap = await tx.get(playerRef);
     const nameLower = name.toLowerCase();
@@ -307,30 +321,44 @@ export const submitOrder = onCall(async (request) => {
   if (!sessionId) throw new HttpsError("invalid-argument", "Missing sessionId.");
 
   const sessionRef = db.collection("sessions").doc(sessionId);
-
   const playerRef = sessionRef.collection("players").doc(uid);
+  let sessionData: any = null;
 
   await db.runTransaction(async (tx) => {
     const sessionSnap = await tx.get(sessionRef);
     if (!sessionSnap.exists) throw new HttpsError("not-found", "Session not found.");
     const session = sessionSnap.data() as any;
+    sessionData = session;
     const weeks = Math.round(Number(session.weeks ?? 10));
+    const daysPerWeek = Math.max(1, Math.round(Number(session.daysPerWeek ?? 5)));
 
     if (!(weekIndex >= 0 && weekIndex < weeks)) throw new HttpsError("invalid-argument", "Invalid weekIndex.");
     if (!["training", "ordering"].includes(session.status)) {
       throw new HttpsError("failed-precondition", "Not accepting orders right now.");
-    }
-    if (session.weekIndex !== weekIndex) {
-      throw new HttpsError("failed-precondition", `Week mismatch. Current week is ${session.weekIndex}.`);
     }
 
     const pSnap = await tx.get(playerRef);
     if (!pSnap.exists) throw new HttpsError("not-found", "Player doc not found. Join session first.");
     const p = pSnap.data() as any;
 
+    if (session.asyncMode) {
+      const playerDailyProfit = Array.isArray(p.dailyProfit) ? p.dailyProfit : [];
+      const asyncWeekIndex = Math.floor(playerDailyProfit.length / daysPerWeek);
+      if (asyncWeekIndex >= weeks) throw new HttpsError("failed-precondition", "You have already completed all weeks.");
+      if (asyncWeekIndex !== weekIndex) {
+        throw new HttpsError("failed-precondition", `Week mismatch. Your current week is ${asyncWeekIndex}.`);
+      }
+    } else {
+      if (session.weekIndex !== weekIndex) {
+        throw new HttpsError("failed-precondition", `Week mismatch. Current week is ${session.weekIndex}.`);
+      }
+    }
+
     const baseOrders = Array.isArray(p.ordersByWeek) ? p.ordersByWeek : [];
     const orders = baseOrders.length === weeks ? baseOrders : Array.from({ length: weeks }, (_, i) => baseOrders[i] ?? null);
     orders[weekIndex] = orderQty;
+
+    const alreadySubmittedThisWeek = p.submittedWeek === weekIndex;
 
     tx.set(
       playerRef,
@@ -342,10 +370,51 @@ export const submitOrder = onCall(async (request) => {
       { merge: true }
     );
 
-    if (session.status === "training") {
-      tx.update(sessionRef, { status: "ordering" });
+    if (!session.asyncMode) {
+      const sessionUpdate: Record<string, any> = {};
+      if (session.status === "training") sessionUpdate.status = "ordering";
+      if (!alreadySubmittedThisWeek) sessionUpdate.submittedCount = admin.firestore.FieldValue.increment(1);
+      if (Object.keys(sessionUpdate).length) tx.update(sessionRef, sessionUpdate);
     }
   });
+
+  // Async mode: compute this week's profits and return them to the client
+  if (sessionData?.asyncMode) {
+    const weeks = Math.round(Number(sessionData.weeks ?? 10));
+    const daysPerWeek = Math.max(1, Math.round(Number(sessionData.daysPerWeek ?? 5)));
+
+    const playerSnap = await playerRef.get();
+    const pData = playerSnap.data() as any;
+    const currentDailyProfit: number[] = Array.isArray(pData.dailyProfit) ? pData.dailyProfit : [];
+    const asyncWeekIndex = Math.floor(currentDailyProfit.length / daysPerWeek);
+
+    // Idempotency: only add profits if they haven't been computed yet for this week
+    if (asyncWeekIndex === weekIndex) {
+      const privateSnap = await db.doc(`sessions/${sessionId}/private/demand`).get();
+      const inGameDemands: number[] = (privateSnap.data() as any).inGameDemands;
+
+      const weekDemands = inGameDemands.slice(weekIndex * daysPerWeek, (weekIndex + 1) * daysPerWeek);
+      const weekProfits = weekDemands.map((D) =>
+        profitForDay(D, orderQty, Number(sessionData.price), Number(sessionData.cost), Number(sessionData.salvage))
+      );
+
+      const newDailyProfit = [...currentDailyProfit, ...weekProfits];
+      const newCumulative = newDailyProfit.reduce((a, b) => a + b, 0);
+
+      const existingRevealed = Array.isArray(pData.revealedDemands) ? pData.revealedDemands : [];
+      await playerRef.update({
+        dailyProfit: newDailyProfit,
+        cumulativeProfit: newCumulative,
+        revealedDemands: [...existingRevealed, ...weekDemands],
+      });
+
+      const finished = newDailyProfit.length >= weeks * daysPerWeek;
+      return {
+        ok: true,
+        asyncReveal: { demands: weekDemands, profits: weekProfits, cumulativeProfit: newCumulative, finished },
+      };
+    }
+  }
 
   return { ok: true };
 });
@@ -391,7 +460,8 @@ export const advanceReveal = onCall(async (request) => {
 
     const revealIndex: number = session.revealIndex ?? 0;
     const weeks = Math.round(Number(session.weeks ?? 10));
-    const totalDays = weeks * 5;
+    const daysPerWeek = Math.max(1, Math.round(Number(session.daysPerWeek ?? 5)));
+    const totalDays = weeks * daysPerWeek;
     if (revealIndex >= totalDays) throw new HttpsError("failed-precondition", "All days already revealed.");
 
     const privateSnap = await tx.get(privateRef);
@@ -403,7 +473,7 @@ export const advanceReveal = onCall(async (request) => {
 
     const D = inGame[revealIndex];
     const dayIndex = revealIndex;
-    const weekIndex = Math.floor(dayIndex / 5);
+    const weekIndex = Math.floor(dayIndex / daysPerWeek);
 
     const playersSnap = await tx.get(sessionRef.collection("players"));
 
@@ -463,11 +533,11 @@ export const advanceReveal = onCall(async (request) => {
         const orders: Array<number | null> = Array.isArray(p.ordersByWeek)
           ? p.ordersByWeek
           : [];
-        const daily = expandWeeklyOrdersToDays(orders, totalDays);
+        const daily = expandWeeklyOrdersToDays(orders, totalDays, daysPerWeek);
         for (let i = 0; i < totalDays; i++) sums[i] += daily[i] ?? 0;
       });
       endgameAvgOrderPerDay = sums.map((s) => s / nPlayers);
-    } else if (nextReveal % 5 === 0) {
+    } else if (nextReveal % daysPerWeek === 0) {
       nextWeek = Math.min(weeks - 1, weekIndex + 1);
       nextStatus = "ordering";
     } else {
@@ -481,6 +551,7 @@ export const advanceReveal = onCall(async (request) => {
       status: nextStatus,
       leaderboard: lbRows.slice(0, 50),
     };
+    if (nextStatus === "ordering") updatePayload.submittedCount = 0;
     if (endgameAvgOrderPerDay) {
       updatePayload.endgameAvgOrderPerDay = endgameAvgOrderPerDay;
     }
@@ -528,6 +599,7 @@ export const startSession = onCall(async (request) => {
     status: "ordering",
     weekIndex: 0,
     revealIndex: 0,
+    submittedCount: 0,
   });
 
   return { ok: true };
@@ -549,12 +621,13 @@ export const redrawSession = onCall(async (request) => {
 
   const seed = Math.floor(Math.random() * 2 ** 31);
   const weeks = Math.round(Number(session.weeks ?? 10));
+  const daysPerWeek = Math.max(1, Math.round(Number(session.daysPerWeek ?? 5)));
   const dataset = generateDemandDataset(
     {
       mu: Number(session.demandMu ?? 50),
       sigma: Number(session.demandSigma ?? 20),
       nTrain: 50,
-      nGame: weeks * 5,
+      nGame: weeks * daysPerWeek,
       price: Number(session.price ?? 1.0),
       cost: Number(session.cost ?? 0.2),
       salvage: Number(session.salvage ?? 0.0),
@@ -612,12 +685,15 @@ export const endSession = onCall(async (request) => {
     cumulativeProfit: number;
   }> = [];
 
+  let playerCount = 0;
+
   await db.runTransaction(async (tx) => {
     const sessionSnap = await tx.get(sessionRef);
     if (!sessionSnap.exists) throw new HttpsError("not-found", "Session not found.");
     const session = sessionSnap.data() as any;
     const weeks = Math.round(Number(session?.weeks ?? 10));
-    const totalDays = weeks * 5;
+    const daysPerWeek = Math.max(1, Math.round(Number(session?.daysPerWeek ?? 5)));
+    const totalDays = weeks * daysPerWeek;
     const revealIndex = Math.max(0, Math.round(Number(session?.revealIndex ?? 0)));
 
     const privateSnap = await tx.get(privateRef);
@@ -625,6 +701,36 @@ export const endSession = onCall(async (request) => {
     const inGame = (privateSnap.data() as any).inGameDemands as number[];
     if (!Array.isArray(inGame) || inGame.length < totalDays) {
       throw new HttpsError("internal", "Invalid in-game demand series.");
+    }
+
+    const playersSnap = await tx.get(sessionRef.collection("players"));
+    const lbRows: Array<{ uid: string; name: string; profit: number; avgOrder: number }> = [];
+    const nPlayers = playersSnap.docs.length || 1;
+    playerCount = playersSnap.docs.length;
+
+    // Async mode: profits already computed per-player; just build leaderboard and finalize session
+    if (session.asyncMode) {
+      const sums = Array.from({ length: totalDays }, () => 0);
+      playersSnap.docs.forEach((pdoc) => {
+        const p = pdoc.data() as any;
+        const orders = Array.isArray(p.ordersByWeek) ? p.ordersByWeek : [];
+        const daily = expandWeeklyOrdersToDays(orders, totalDays, daysPerWeek);
+        for (let i = 0; i < totalDays; i++) sums[i] += daily[i] ?? 0;
+        const submittedOrders = (orders as Array<number | null>).filter((x) => typeof x === "number") as number[];
+        const avgOrder = submittedOrders.length ? submittedOrders.reduce((a, b) => a + b, 0) / submittedOrders.length : 0;
+        lbRows.push({ uid: pdoc.id, name: String(p.name ?? "Anonymous"), profit: Number(p.cumulativeProfit ?? 0), avgOrder });
+      });
+      lbRows.sort((a, b) => b.profit - a.profit);
+      const endgameAvgOrderPerDay = sums.map((s) => s / nPlayers);
+      tx.update(sessionRef, {
+        status: "finished",
+        revealIndex: totalDays,
+        weekIndex: Math.max(0, weeks - 1),
+        revealedDemands: inGame,
+        leaderboard: lbRows.slice(0, 50),
+        endgameAvgOrderPerDay,
+      });
+      return; // playerUpdates stays empty; no player doc rewrites needed
     }
 
     const revealed = Array.isArray(session.revealedDemands) ? session.revealedDemands : [];
@@ -635,8 +741,6 @@ export const endSession = onCall(async (request) => {
     const cost = Number(session.cost ?? 0.2);
     const salvage = Number(session.salvage ?? 0);
 
-    const playersSnap = await tx.get(sessionRef.collection("players"));
-    const lbRows: Array<{ uid: string; name: string; profit: number; avgOrder: number }> = [];
     const sums = Array.from({ length: dayCount }, () => 0);
 
     // Calculate updates but don't write yet
@@ -646,7 +750,7 @@ export const endSession = onCall(async (request) => {
       const orders: Array<number | null> = baseOrders.length === weeks
         ? baseOrders
         : Array.from({ length: weeks }, (_, i) => baseOrders[i] ?? null);
-      const dailyOrders = expandWeeklyOrdersToDays(orders, totalDays);
+      const dailyOrders = expandWeeklyOrdersToDays(orders, totalDays, daysPerWeek);
       const dailyProfit: number[] = [];
       let cumulativeProfit = 0;
       for (let i = 0; i < dayCount; i++) {
@@ -673,7 +777,6 @@ export const endSession = onCall(async (request) => {
     });
 
     lbRows.sort((a, b) => b.profit - a.profit);
-    const nPlayers = playersSnap.docs.length || 1;
     const endgameAvgOrderPerDay = sums.map((s) => s / nPlayers);
 
     tx.update(sessionRef, {
@@ -703,6 +806,12 @@ export const endSession = onCall(async (request) => {
       );
     }
     await batch.commit();
+  }
+
+  if (instructorDoc.exists && playerCount > 0) {
+    await instructorRef.update({
+      playersCompleted: admin.firestore.FieldValue.increment(playerCount),
+    });
   }
 
   return { ok: true };

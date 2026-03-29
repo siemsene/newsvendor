@@ -5,100 +5,122 @@ import { profitForDay } from "../lib/gameMath";
 import { Toast } from "./Toast";
 
 // Dragon images for weekly cheer
-import dragon1 from "../assets/dragons/dragon_1.png";
-import dragon2 from "../assets/dragons/dragon_2.png";
-import dragon3 from "../assets/dragons/dragon_3.png";
-import dragon4 from "../assets/dragons/dragon_4.png";
-import dragon5 from "../assets/dragons/dragon_5.png";
-import dragon6 from "../assets/dragons/dragon_6.png";
+import dragon1 from "../assets/dragons/dragon_1.webp";
+import dragon2 from "../assets/dragons/dragon_2.webp";
+import dragon3 from "../assets/dragons/dragon_3.webp";
+import dragon4 from "../assets/dragons/dragon_4.webp";
+import dragon5 from "../assets/dragons/dragon_5.webp";
+import dragon6 from "../assets/dragons/dragon_6.webp";
+import dragon7 from "../assets/dragons/dragon_7.webp";
+import dragon8 from "../assets/dragons/dragon_8.webp";
+import dragon9 from "../assets/dragons/dragon_9.webp";
+import dragon10 from "../assets/dragons/dragon_10.webp";
+import dragon11 from "../assets/dragons/dragon_11.webp";
 
-const DRAGONS = [dragon1, dragon2, dragon3, dragon4, dragon5, dragon6];
+const DRAGONS = [dragon1, dragon2, dragon3, dragon4, dragon5, dragon6, dragon7, dragon8, dragon9, dragon10, dragon11];
 
-const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+const ALL_DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 export function RevealTheatre({
   session,
   player,
+  asyncRevealOverride,
 }: {
   session: SessionPublic;
   player: PlayerDoc;
+  asyncRevealOverride?: {
+    demands: number[];
+    profits: number[];
+    weekIndex: number;
+    cumulativeProfit: number;
+  };
 }) {
-  const revealIndex = session.revealIndex ?? 0;
   const weeks = session.weeks ?? 10;
-  const totalDays = weeks * 5;
-  const revealed = session.revealedDemands ?? [];
+  const daysPerWeek = session.daysPerWeek ?? 5;
+  const totalDays = weeks * daysPerWeek;
+  const DOW = ALL_DOW.slice(0, daysPerWeek);
   const training = session.trainingDemands ?? [];
   const meanHat = training.length ? training.reduce((a, b) => a + b, 0) / training.length : 0;
   const stdHat = training.length > 1
     ? Math.sqrt(training.reduce((a, b) => a + (b - meanHat) ** 2, 0) / (training.length - 1))
     : 0;
 
+  // In async mode we use the override; in sync mode we use the session's reveal state.
+  const syncRevealIndex = session.revealIndex ?? 0;
+  const currentWeekIndex = asyncRevealOverride
+    ? asyncRevealOverride.weekIndex
+    : Math.floor(Math.max(0, syncRevealIndex - 1) / daysPerWeek);
+  const weekStart = currentWeekIndex * daysPerWeek;
+  const weekDays = asyncRevealOverride
+    ? asyncRevealOverride.demands
+    : (session.revealedDemands ?? []).slice(weekStart, weekStart + daysPerWeek);
+  const revealIndex = asyncRevealOverride
+    ? (asyncRevealOverride.weekIndex + 1) * daysPerWeek
+    : syncRevealIndex;
+
+  const orderQty = player.ordersByWeek?.[currentWeekIndex] ?? null;
+
   const [toast, setToast] = useState<string>("");
   const [showToast, setShowToast] = useState(false);
 
+  // Toast fires on sync reveal only (async players see all days at once).
   useEffect(() => {
-    if (revealIndex > 0) {
-      const day = revealIndex - 1;
-      const week = Math.floor(day / 5) + 1;
-      const dow = DOW[day % 5];
+    if (!asyncRevealOverride && syncRevealIndex > 0) {
+      const day = syncRevealIndex - 1;
+      const week = Math.floor(day / daysPerWeek) + 1;
+      const dow = ALL_DOW[day % daysPerWeek] ?? `Day ${(day % daysPerWeek) + 1}`;
       setToast(`🥐 Bakery doors open… Week ${week} · ${dow} demand revealed!`);
       setShowToast(true);
       const t = setTimeout(() => setShowToast(false), 2200);
       return () => clearTimeout(t);
     }
-  }, [revealIndex]);
-
-  const currentDay = Math.max(0, revealIndex - 1);
-  const currentWeekIndex = Math.floor(currentDay / 5);
-  const weekStart = currentWeekIndex * 5;
-  const weekDays = revealed.slice(weekStart, weekStart + 5);
-
-  const orderQty = player.ordersByWeek?.[currentWeekIndex] ?? null;
-  const currentWeekOrder = player.ordersByWeek?.[session.weekIndex ?? 0] ?? null;
-  const isDeciding = currentWeekOrder === null;
+  }, [syncRevealIndex, asyncRevealOverride]);
 
   const daily = useMemo(() => {
     return weekDays.map((d, idx) => {
-      const q = orderQty ?? 0;
-      const pf = profitForDay({ D: d, Q: q, price: session.price, cost: session.cost, salvage: session.salvage });
-      return { idx, d, q, profit: pf };
+      const profit = asyncRevealOverride
+        ? (asyncRevealOverride.profits[idx] ?? 0)
+        : profitForDay({ D: d, Q: orderQty ?? 0, price: session.price, cost: session.cost, salvage: session.salvage });
+      return { idx, d, profit };
     });
-  }, [weekDays, orderQty, session.price, session.cost, session.salvage]);
+  }, [weekDays, orderQty, session.price, session.cost, session.salvage, asyncRevealOverride]);
 
   const weeklyProfit = daily.reduce((a, b) => a + b.profit, 0);
-  const cum = player.cumulativeProfit ?? 0;
+  const cum = asyncRevealOverride ? asyncRevealOverride.cumulativeProfit : (player.cumulativeProfit ?? 0);
+  const dragonWeekIndex = asyncRevealOverride ? asyncRevealOverride.weekIndex : (session.weekIndex ?? 0);
+  const displayWeekIndex = asyncRevealOverride ? asyncRevealOverride.weekIndex : (session.weekIndex ?? 0);
 
   return (
     <div className="card">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
-        <h2 style={{ margin: 0 }}>Revealed Demand</h2>
-        <span className="small">Bakery doors open Mon–Fri</span>
+      <div className="row between baseline mb-8">
+        <h2 className="m-0">Revealed Demand</h2>
+        <span className="small">Bakery doors open each day this week</span>
       </div>
 
-      <div className="kpi" style={{ gap: "6px 8px" }}>
-        <div className="pill" style={{ padding: "4px 10px" }}>Week: <span className="mono">{(session.weekIndex ?? 0) + 1}/{weeks}</span></div>
-        <div className="pill" style={{ padding: "4px 10px" }}>Revealed: <span className="mono">{revealIndex}/{totalDays}</span></div>
-        <div className="pill" style={{ padding: "4px 10px" }}>
+      <div className="kpi gap-sm">
+        <div className="pill sm">Week: <span className="mono">{displayWeekIndex + 1}/{weeks}</span></div>
+        <div className="pill sm">Revealed: <span className="mono">{revealIndex}/{totalDays}</span></div>
+        <div className="pill sm">
           Plan: <span className="mono">{orderQty ?? "—"}</span>
         </div>
-        <div className="pill" style={{ padding: "4px 10px" }}>
+        <div className="pill sm">
           Profit: <span className="mono">{weeklyProfit.toFixed(2)}</span>
         </div>
-        <div className="pill" style={{ padding: "4px 10px" }}>Total: <span className="mono">{cum.toFixed(2)}</span></div>
+        <div className="pill sm">Total: <span className="mono">{cum.toFixed(2)}</span></div>
       </div>
 
-      <div className="hr" style={{ margin: "8px 0" }} />
+      <div className="hr sm" />
 
-      <div className="grid five">
-        {Array.from({ length: 5 }, (_, i) => {
+      <div className={`grid grid-days-${daysPerWeek}`}>
+        {Array.from({ length: daysPerWeek }, (_, i) => {
           const d = weekDays[i];
           const entry = daily.find((x) => x.idx === i);
           const isRevealed = typeof d === "number";
-          const isHigh = isRevealed && d > meanHat + stdHat;
-          const isLow = isRevealed && d < meanHat - stdHat;
+          const isHigh = isRevealed && Number.isFinite(meanHat) && Number.isFinite(stdHat) && d > meanHat + 0.5 * stdHat;
+          const isLow = isRevealed && Number.isFinite(meanHat) && Number.isFinite(stdHat) && d < meanHat - 0.5 * stdHat;
           const cardClass = `day-card${isRevealed ? " revealed" : ""}${isHigh ? " high-demand" : ""}${isLow ? " low-demand" : ""}`;
           const profitValue = entry?.profit ?? 0;
-          const profitColor = profitValue > 0 ? "var(--success)" : profitValue < 0 ? "var(--danger)" : "inherit";
+          const profitClass = isRevealed ? (profitValue > 0 ? "text-success" : profitValue < 0 ? "text-danger" : "") : "";
           return (
             <motion.div
               key={i}
@@ -114,7 +136,7 @@ export function RevealTheatre({
               </div>
 
               <div className="profit-row">
-                <div className="mono" style={{ fontWeight: 700, color: isRevealed ? profitColor : "inherit", textAlign: "center", fontSize: "12px" }}>
+                <div className={`mono font-bold text-center text-xs ${profitClass}`}>
                   {isRevealed ? (profitValue >= 0 ? "+" : "") + profitValue.toFixed(2) : "—"}
                 </div>
               </div>
@@ -124,30 +146,19 @@ export function RevealTheatre({
       </div>
 
       {/* Dragon of the week! */}
-      <div style={{
-        display: "flex",
-        justifyContent: "center",
-        marginTop: 12,
-        paddingTop: 8,
-        borderTop: "1px solid var(--border-soft)",
-        opacity: 0.9
-      }}>
-        <motion.img
-          key={session.weekIndex}
-          src={DRAGONS[(session.weekIndex ?? 0) % DRAGONS.length]}
-          alt="Dragon of the week"
-          style={{
-            width: 120,
-            height: 120,
-            borderRadius: 12,
-            objectFit: "cover",
-            boxShadow: "0 4px 12px rgba(0,0,0,0.15)"
-          }}
-          initial={{ scale: 0, rotate: -10 }}
-          animate={{ scale: 1, rotate: 0 }}
-          transition={{ type: "spring", stiffness: 260, damping: 20 }}
-        />
-      </div>
+      {!session.noDragons && (
+        <div className="dragon-wrap">
+          <motion.img
+            key={dragonWeekIndex}
+            src={DRAGONS[dragonWeekIndex % DRAGONS.length]}
+            alt="Dragon of the week"
+            className="dragon-img"
+            initial={{ scale: 0, rotate: -10 }}
+            animate={{ scale: 1, rotate: 0 }}
+            transition={{ type: "spring", stiffness: 260, damping: 20 }}
+          />
+        </div>
+      )}
 
       <Toast message={toast} show={showToast} />
     </div>

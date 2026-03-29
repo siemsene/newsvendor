@@ -67,7 +67,8 @@ export function HostSession() {
 
   const weekIndex = session?.weekIndex ?? 0;
   const weeks = session?.weeks ?? 10;
-  const totalDays = weeks * 5;
+  const daysPerWeek = session?.daysPerWeek ?? 5;
+  const totalDays = weeks * daysPerWeek;
   const submitted = useMemo(() => {
     return players.filter((p) => (p.ordersByWeek?.[weekIndex] ?? null) !== null);
   }, [players, weekIndex]);
@@ -87,6 +88,8 @@ export function HostSession() {
   }, [playerPage, totalPages]);
 
   const allSubmitted = players.length > 0 && submitted.length === players.length;
+  const allAsyncFinished = session?.asyncMode === true && players.length > 0 &&
+    players.every((p) => (p.dailyProfit?.length ?? 0) >= weeks * daysPerWeek);
   const showLeaderboard = session?.showLeaderboard === true;
   const trainingDemands = session?.trainingDemands ?? [];
   const allDemands = useMemo(() => trainingDemands.concat(inGameDemands), [trainingDemands, inGameDemands]);
@@ -186,7 +189,7 @@ export function HostSession() {
         if (current.status === "finished") break;
         if (current.status !== "ordering" && current.status !== "revealing") break;
         const revealIndex = current.revealIndex ?? 0;
-        const currentTotalDays = (current.weeks ?? 10) * 5;
+        const currentTotalDays = (current.weeks ?? 10) * (current.daysPerWeek ?? 5);
         if (revealIndex >= currentTotalDays) break;
 
         await api.advanceReveal({ sessionId });
@@ -194,7 +197,7 @@ export function HostSession() {
 
         const next = sessionRef.current;
         if (!next) break;
-        if (next.status === "ordering" && next.revealIndex % 5 === 0) break;
+        if (next.status === "ordering" && next.revealIndex % (next.daysPerWeek ?? 5) === 0) break;
       }
     } catch (e: any) {
       console.error(e);
@@ -208,6 +211,7 @@ export function HostSession() {
 
   useEffect(() => {
     if (!session) return;
+    if (session.asyncMode) return;
     if (session.status === "ordering" && allSubmitted) {
       runAutoReveal();
     }
@@ -338,7 +342,8 @@ export function HostSession() {
   function downloadCsv() {
     if (!session || !sessionId) return;
     const weeks = session.weeks ?? 10;
-    const totalDays = weeks * 5;
+    const dpw = session.daysPerWeek ?? 5;
+    const totalDays = weeks * dpw;
     const inGame = inGameDemands.length ? inGameDemands : session.revealedDemands ?? [];
     const rows: string[] = [];
     rows.push(
@@ -356,8 +361,8 @@ export function HostSession() {
 
     const dayCount = Math.min(inGame.length, totalDays);
     for (let i = 0; i < dayCount; i++) {
-      const week = Math.floor(i / 5) + 1;
-      const day = (i % 5) + 1;
+      const week = Math.floor(i / dpw) + 1;
+      const day = (i % dpw) + 1;
       for (const p of players) {
         const orders = Array.isArray(p.ordersByWeek) ? p.ordersByWeek : [];
         const orderQty = orders[week - 1] ?? "";
@@ -407,22 +412,22 @@ export function HostSession() {
   return (
     <div className="grid">
       <div className="card">
-        <div className="row" style={{ marginBottom: 12 }}>
-          <h2 style={{ margin: 0 }}>Host Control Room</h2>
+        <div className="row mb-12">
+          <h2 className="m-0">Host Control Room</h2>
           <div className="spacer" />
-          <div className="row" style={{ gap: 6 }}>
+          <div className="row gap-6">
             <span className={`status-dot ${statusConfig.dotClass}`} />
             <span className={`badge ${statusConfig.badgeClass}`}>{statusConfig.label}</span>
           </div>
         </div>
 
-        <div className="row" style={{ gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
+        <div className="row gap-16 start">
           <div>
-            <div className="small" style={{ marginBottom: 4 }}>Session Code</div>
+            <div className="small mb-4">Session Code</div>
             <div className="session-code">{session.code}</div>
           </div>
-          <div style={{ flex: 1, minWidth: 200 }}>
-            <div className="small" style={{ marginBottom: 4 }}>Progress</div>
+          <div className="progress-section">
+            <div className="small mb-4">Progress</div>
             <div className="progress-bar">
               <div className="fill" style={{ width: `${(session.revealIndex / totalDays) * 100}%` }} />
             </div>
@@ -432,13 +437,8 @@ export function HostSession() {
           </div>
         </div>
 
-        {session.drawFailed && (
-          <p className="small" style={{ color: "var(--danger)", marginTop: 12 }}>
-            Feasible dataset not drawn in this attempt - please hit the redraw button.
-          </p>
-        )}
 
-        <div className="kpi" style={{ marginTop: 16 }}>
+        <div className="kpi mt-16">
           <div className="pill accent">
             Optimal Q*: <span className="mono">{session.optimalQ}</span>
           </div>
@@ -457,13 +457,26 @@ export function HostSession() {
         <div className="row">
           {session.status === "training" ? (
             <>
-              <button className="btn large" disabled={busy || players.length === 0} onClick={start}>
+              <button className="btn large" disabled={busy || players.length === 0 || !!session.drawFailed} onClick={start}>
                 Start session
               </button>
               <button className="btn ghost" disabled={busy} onClick={redraw}>
                 Redraw distribution
               </button>
+              {session.drawFailed && (
+                <span className="small text-danger">
+                  No feasible demand dataset — redraw before starting.
+                </span>
+              )}
             </>
+          ) : session.asyncMode ? (
+            <span className="small">
+              Players finished:{" "}
+              <span className="mono">
+                {players.filter((p) => (p.dailyProfit?.length ?? 0) >= weeks * daysPerWeek).length}/{players.length}
+              </span>
+              {allAsyncFinished && <span className="badge success badge-ml">All done</span>}
+            </span>
           ) : (
             <>
               <span className="small">
@@ -479,11 +492,11 @@ export function HostSession() {
           )}
           {session.status !== "finished" && (
             <button className="btn secondary" disabled={busy} onClick={endEarly}>
-              End session early
+              {allAsyncFinished ? "End session" : "End session early"}
             </button>
           )}
           <div className="spacer" />
-          <label className="small" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <label className="small inline-label">
             <input
               type="checkbox"
               checked={showLeaderboard}
@@ -494,6 +507,12 @@ export function HostSession() {
           </label>
         </div>
 
+        {allAsyncFinished && session.status !== "finished" && (
+          <>
+            <div className="hr" />
+            <p className="small text-success">All players have finished their weeks. You can now end the session.</p>
+          </>
+        )}
         {msg && <div className="hr" />}
         {msg && <p className="small">{msg}</p>}
         {autoMsg && <div className="hr" />}
@@ -524,7 +543,7 @@ export function HostSession() {
             </p>
             <p className="small">Includes training and in-game draws (host only).</p>
             {demandHistogram && (
-              <div style={{ height: 200 }}>
+              <div className="chart-h-200">
                 <ResponsiveContainer>
                   <ComposedChart data={demandHistogram.data}>
                     <XAxis dataKey="label" tick={{ fontSize: 11 }} interval={0} />
@@ -543,7 +562,7 @@ export function HostSession() {
               Profit across the available demand draws vs. order quantity (Q). Optimal Q* is{" "}
               <span className="mono">{session.optimalQ}</span>.
             </p>
-            <div style={{ height: 220 }}>
+            <div className="chart-h-220">
               <ResponsiveContainer>
                 <LineChart data={payoffData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
@@ -584,24 +603,59 @@ export function HostSession() {
           <>
             <div className="grid">
               {paginatedPlayers.map((p) => {
-                const has = (p.ordersByWeek?.[weekIndex] ?? null) !== null;
                 const profit = p.cumulativeProfit ?? 0;
+                if (session.asyncMode) {
+                  const playerWeek = Math.floor((p.dailyProfit?.length ?? 0) / daysPerWeek);
+                  const finished = playerWeek >= weeks;
+                  return (
+                    <div key={p.uid} className={`player-card ${finished ? "submitted" : "pending"}`}>
+                      <div className="row">
+                        <div className="flex-1">
+                          <div className="row gap-8 mb-4">
+                            <span className="player-name">{p.name}</span>
+                            {finished ? (
+                              <span className="badge success xs">Done</span>
+                            ) : (
+                              <span className="badge warning xs">Week {playerWeek + 1}/{weeks}</span>
+                            )}
+                          </div>
+                          <div className="small stats-row">
+                            <span>
+                              Profit: <span className={`mono font-bold ${profit >= 0 ? "text-success" : "text-danger"}`}>
+                                {profit >= 0 ? "+" : ""}{profit.toFixed(2)}
+                              </span>
+                            </span>
+                          </div>
+                        </div>
+                        <div className="row player-card-actions">
+                          <button className="btn ghost" disabled={busy || finished} onClick={() => nudge(p.uid)}>
+                            Nudge
+                          </button>
+                          <button className="btn ghost" disabled={busy} onClick={() => { if (confirm(`Kick ${p.name}?`)) kick(p.uid); }}>
+                            Kick
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+                const has = (p.ordersByWeek?.[weekIndex] ?? null) !== null;
                 return (
                   <div
                     key={p.uid}
                     className={`player-card ${has ? "submitted" : "pending"}`}
                   >
                     <div className="row">
-                      <div style={{ flex: 1 }}>
-                        <div className="row" style={{ gap: 8, marginBottom: 4 }}>
-                          <span style={{ fontWeight: 700, fontSize: 15 }}>{p.name}</span>
+                      <div className="flex-1">
+                        <div className="row gap-8 mb-4">
+                          <span className="player-name">{p.name}</span>
                           {has ? (
-                            <span className="badge success" style={{ fontSize: 10, padding: "3px 8px" }}>Submitted</span>
+                            <span className="badge success xs">Submitted</span>
                           ) : (
-                            <span className="badge warning" style={{ fontSize: 10, padding: "3px 8px" }}>Pending</span>
+                            <span className="badge warning xs">Pending</span>
                           )}
                         </div>
-                        <div className="small" style={{ display: "flex", gap: 16 }}>
+                        <div className="small stats-row">
                           <span>
                             Order: <span className="mono font-bold">{has ? p.ordersByWeek?.[weekIndex] : "—"}</span>
                           </span>
@@ -612,7 +666,7 @@ export function HostSession() {
                           </span>
                         </div>
                       </div>
-                      <div className="row">
+                      <div className="row player-card-actions">
                         <button className="btn ghost" disabled={busy || has} onClick={() => nudge(p.uid)}>
                           Nudge
                         </button>
@@ -634,7 +688,7 @@ export function HostSession() {
               })}
             </div>
             {totalPages > 1 && (
-              <div className="row" style={{ marginTop: 16, justifyContent: "center", gap: 8 }}>
+              <div className="row mt-16 center gap-8">
                 <button
                   className="btn ghost"
                   disabled={playerPage === 0}
@@ -642,7 +696,7 @@ export function HostSession() {
                 >
                   Previous
                 </button>
-                <span className="small mono" style={{ padding: "8px 12px" }}>
+                <span className="small mono page-indicator">
                   Page {playerPage + 1} / {totalPages}
                 </span>
                 <button

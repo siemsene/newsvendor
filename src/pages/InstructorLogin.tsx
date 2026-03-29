@@ -76,7 +76,7 @@ export function InstructorLogin() {
   }
 
   return (
-    <div style={{ maxWidth: 400, margin: "0 auto", padding: 20 }}>
+    <div className="auth-page compact">
       <div className="card">
         <h2>Instructor Login</h2>
         <p className="text-muted">Sign in to access your instructor dashboard.</p>

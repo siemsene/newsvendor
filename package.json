@@ -4,19 +4,20 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
+    "check:binding": "node scripts/check-rolldown-binding.mjs",
+    "dev": "npm run check:binding && vite",
+    "build": "npm run check:binding && tsc -b && vite build",
+    "test:compat": "npm run build && node scripts/compat-smoke.mjs",
     "preview": "vite preview",
-
     "build:functions": "npm --prefix functions run build",
-
     "deploy": "npm run build && npm run build:functions && firebase deploy",
     "deploy:hosting": "npm run build && firebase deploy --only hosting:the-beer-game-37777398-4d5fb-69285",
     "deploy:functions": "npm run build:functions && firebase deploy --only functions",
     "deploy:rules": "firebase deploy --only firestore:rules,firestore:indexes"
   },
   "dependencies": {
-    "firebase": "^10.13.2",
+    "@react-pdf/renderer": "^4.3.2",
+    "firebase": "^12.10.0",
     "framer-motion": "^11.3.30",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -26,8 +27,13 @@
   "devDependencies": {
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
-    "@vitejs/plugin-react": "^4.3.1",
+    "@vitejs/plugin-react": "^5.2.0",
+    "sharp": "^0.34.5",
     "typescript": "^5.5.4",
-    "vite": "^5.4.1"
-  }
+    "vite": "^8.0.0"
+  },
+  "browserslist": [
+    "last 2 Chrome versions",
+    "last 2 Firefox versions"
+  ]
 }

@@ -1,7 +1,8 @@
 import React, { useState } from "react";
+import type { CSSProperties } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
-import dragons from "../assets/dragons.png";
+import dragons from "../assets/dragons.webp";
 
 export function Landing() {
   const nav = useNavigate();
@@ -10,6 +11,7 @@ export function Landing() {
 
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string>("");
+  const landingStyle = { "--landing-image": `url(${dragons})` } as CSSProperties;
 
   async function join(allowTakeover?: boolean) {
     setMsg("");
@@ -39,21 +41,12 @@ export function Landing() {
 
   return (
     <div
-      style={{
-        backgroundImage: `url(${dragons})`,
-        backgroundSize: "cover",
-        backgroundPosition: "center",
-        backgroundRepeat: "no-repeat",
-        minHeight: "calc(100vh - 100px)",
-        padding: 20,
-        borderRadius: 20,
-        display: "flex",
-        flexDirection: "column",
-      }}
+      className="landing-hero"
+      style={landingStyle}
     >
-      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <div className="card" style={{ background: "rgba(255,255,255,0.92)", backdropFilter: "blur(10px)", maxWidth: 400, width: "100%" }}>
-          <div className="row" style={{ marginBottom: 8 }}>
+      <div className="landing-content">
+        <div className="card landing-panel">
+          <div className="row mb-8">
             <h2 style={{ margin: 0 }}>Join a Session</h2>
             <span className="badge">Players</span>
           </div>

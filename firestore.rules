@@ -27,11 +27,6 @@ service cloud.firestore {
       return isSignedIn() && resource.data.createdByUid == request.auth.uid;
     }
 
-    function isMember(sessionId) {
-      return isSignedIn() &&
-        exists(/databases/$(database)/documents/sessions/$(sessionId)/players/$(request.auth.uid));
-    }
-
     // Admin config - only admin can read/write
     match /adminConfig/{docId} {
       allow read, write: if isAdmin();
@@ -53,14 +48,20 @@ service cloud.firestore {
 
     // Sessions collection
     match /sessions/{sessionId} {
-      // Session owner, admin, or member can read
-      allow read: if isAdmin() || isSessionOwnerDoc() || isMember(sessionId);
+      // Any signed-in user can read session documents.
+      // The session ID is a UUID (not guessable); sensitive in-game demands are in /private.
+      allow read: if isSignedIn();
 
       // Only approved instructors/admin can create
       allow create: if isApprovedInstructor();
 
-      // Only owner or admin can update/delete
-      allow update, delete: if isAdmin() || isSessionOwnerDoc();
+      // Only owner or admin can update/delete general fields
+      allow delete: if isAdmin() || isSessionOwnerDoc();
+      allow update: if isAdmin() || isSessionOwnerDoc() ||
+        // Members may stamp their own UID into weekSubmissions only
+        (isSignedIn() &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['weekSubmissions']) &&
+         request.resource.data.weekSubmissions.diff(resource.data.get(['weekSubmissions'], {})).affectedKeys().hasOnly([request.auth.uid]));
 
       match /players/{uid} {
         // Owner, admin, or the player themselves can read
