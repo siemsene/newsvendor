@@ -23,6 +23,7 @@ export {
   rejectInstructor,
   revokeInstructorAccess,
   getInstructorUsageStats,
+  adminResetInstructorPassword,
 } from "./admin";
 
 admin.initializeApp();

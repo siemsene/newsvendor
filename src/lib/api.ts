@@ -96,6 +96,11 @@ export const api = {
     { ok: boolean; sessionsEnded: number }
   >(functions, "revokeInstructorAccess"),
 
+  adminResetInstructorPassword: httpsCallable<
+    { uid: string; newPassword: string },
+    { ok: boolean }
+  >(functions, "adminResetInstructorPassword"),
+
   getInstructorUsageStats: httpsCallable<
     void,
     {

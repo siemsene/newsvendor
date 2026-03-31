@@ -260,6 +260,34 @@ export function AdminInstructorDetail() {
     });
   }
 
+  async function handleResetPassword() {
+    if (!uid) return;
+    setModal({
+      type: "prompt",
+      title: "Reset Password",
+      message: `Enter a new password for ${instructor?.displayName ?? "this instructor"}. Must be at least 6 characters.`,
+      placeholder: "New password",
+      confirmLabel: "Reset Password",
+      confirmClass: "danger",
+      onConfirm: async (newPassword) => {
+        setModal(null);
+        if (!newPassword || newPassword.length < 6) {
+          addToast("Password must be at least 6 characters.", "error");
+          return;
+        }
+        setActionBusy(true);
+        try {
+          await api.adminResetInstructorPassword({ uid, newPassword });
+          addToast("Password reset successfully.", "success");
+        } catch (e: any) {
+          addToast(e?.message ?? "Failed to reset password", "error");
+        } finally {
+          setActionBusy(false);
+        }
+      },
+    });
+  }
+
   function formatDate(dateStr: string | null | undefined): string {
     if (!dateStr) return "-";
     return new Date(dateStr).toLocaleString();
@@ -423,6 +451,13 @@ export function AdminInstructorDetail() {
                 Revoke Access
               </button>
             )}
+            <button
+              className="btn outline"
+              onClick={handleResetPassword}
+              disabled={actionBusy}
+            >
+              Reset Password
+            </button>
           </div>
         </div>
       </div>

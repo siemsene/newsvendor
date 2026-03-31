@@ -261,6 +261,30 @@ export const revokeInstructorAccess = onCall(async (request) => {
   return { ok: true, sessionsEnded: activeSessions.docs.length };
 });
 
+export const adminResetInstructorPassword = onCall(async (request) => {
+  await assertAdmin(request);
+
+  const instructorUid = String(request.data?.uid ?? "");
+  const newPassword = String(request.data?.newPassword ?? "");
+
+  if (!instructorUid) {
+    throw new HttpsError("invalid-argument", "Instructor UID required.");
+  }
+  if (newPassword.length < 6) {
+    throw new HttpsError("invalid-argument", "Password must be at least 6 characters.");
+  }
+
+  // Verify the user exists and is an instructor
+  const instructorDoc = await db().collection("instructors").doc(instructorUid).get();
+  if (!instructorDoc.exists) {
+    throw new HttpsError("not-found", "Instructor not found.");
+  }
+
+  await admin.auth().updateUser(instructorUid, { password: newPassword });
+
+  return { ok: true };
+});
+
 export const getInstructorUsageStats = onCall(async (request) => {
   await assertAdmin(request);
 
