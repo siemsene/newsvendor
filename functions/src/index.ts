@@ -955,7 +955,7 @@ export const getMySessions = onCall(async (request) => {
   return { sessions };
 });
 
-export const cleanupOldSessions = onSchedule("every 24 hours", async () => {
+export const cleanupOldSessions = onSchedule("every monday 03:00", async () => {
   const cutoff = admin.firestore.Timestamp.fromDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
   const snap = await db.collection("sessions").where("createdAt", "<", cutoff).get();
 
