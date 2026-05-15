@@ -14,6 +14,9 @@ export {
   requestPasswordReset,
 } from "./instructorAuth";
 
+// Re-export billing kill switch (Pub/Sub triggered)
+export { billingKillSwitch } from "./killSwitch";
+
 // Re-export admin functions
 export {
   listPendingInstructors,
@@ -27,7 +30,9 @@ export {
 } from "./admin";
 
 admin.initializeApp();
-setGlobalOptions({ region: "us-central1" });
+setGlobalOptions({ region: "us-central1", enforceAppCheck: true, maxInstances: 30 });
+
+const MAX_PLAYERS_PER_SESSION = 150;
 
 const db = admin.firestore();
 
@@ -295,6 +300,13 @@ export const joinSession = onCall(async (request) => {
     }
 
     // New player - create fresh record
+    const currentPlayersCount = Number(session?.playersCount ?? 0);
+    if (currentPlayersCount >= MAX_PLAYERS_PER_SESSION) {
+      throw new HttpsError(
+        "resource-exhausted",
+        `Session is full (max ${MAX_PLAYERS_PER_SESSION} players).`
+      );
+    }
     tx.create(playerRef, {
       name,
       joinedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -324,6 +336,7 @@ export const submitOrder = onCall(async (request) => {
   const sessionRef = db.collection("sessions").doc(sessionId);
   const playerRef = sessionRef.collection("players").doc(uid);
   let sessionData: any = null;
+  const submitAt = Date.now();
 
   await db.runTransaction(async (tx) => {
     const sessionSnap = await tx.get(sessionRef);
@@ -341,6 +354,11 @@ export const submitOrder = onCall(async (request) => {
     const pSnap = await tx.get(playerRef);
     if (!pSnap.exists) throw new HttpsError("not-found", "Player doc not found. Join session first.");
     const p = pSnap.data() as any;
+
+    const lastSubmitAt = Number(p.lastSubmitAt ?? 0);
+    if (submitAt - lastSubmitAt < 500) {
+      throw new HttpsError("resource-exhausted", "Slow down — wait a moment before submitting again.");
+    }
 
     if (session.asyncMode) {
       const playerDailyProfit = Array.isArray(p.dailyProfit) ? p.dailyProfit : [];
@@ -367,6 +385,7 @@ export const submitOrder = onCall(async (request) => {
         ordersByWeek: orders,
         submittedWeek: weekIndex,
         lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+        lastSubmitAt: submitAt,
       },
       { merge: true }
     );
@@ -992,6 +1011,38 @@ export const cleanupOldSessions = onSchedule("every monday 03:00", async () => {
     }
   });
   await Promise.all(deletions);
+});
+
+// Weekly sweep: delete anonymous Firebase Auth users that haven't signed in for 30+ days.
+export const cleanupAnonymousUsers = onSchedule("every monday 04:00", async () => {
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const uidsToDelete: string[] = [];
+  let pageToken: string | undefined;
+
+  do {
+    const result: admin.auth.ListUsersResult = await admin.auth().listUsers(1000, pageToken);
+    for (const user of result.users) {
+      if (user.providerData.length > 0) continue; // not anonymous
+      const lastSignInTime = user.metadata.lastSignInTime;
+      if (!lastSignInTime) continue;
+      const lastSignIn = new Date(lastSignInTime).getTime();
+      if (Number.isFinite(lastSignIn) && lastSignIn < cutoff) {
+        uidsToDelete.push(user.uid);
+      }
+    }
+    pageToken = result.pageToken;
+  } while (pageToken);
+
+  let deleted = 0;
+  let failed = 0;
+  for (let i = 0; i < uidsToDelete.length; i += 1000) {
+    const chunk = uidsToDelete.slice(i, i + 1000);
+    const result = await admin.auth().deleteUsers(chunk);
+    deleted += result.successCount;
+    failed += result.failureCount;
+  }
+
+  console.log(`[cleanupAnonymousUsers] Deleted ${deleted} stale anonymous users (failed ${failed}).`);
 });
 
 // Send daily email to admin if there are pending instructor approvals

@@ -48,9 +48,13 @@ service cloud.firestore {
 
     // Sessions collection
     match /sessions/{sessionId} {
-      // Any signed-in user can read session documents.
-      // The session ID is a UUID (not guessable); sensitive in-game demands are in /private.
-      allow read: if isSignedIn();
+      // Read is restricted to: admin, session owner, or a user who already has
+      // a player doc in this session. Prevents anonymous callers from listening
+      // to arbitrary session IDs they don't belong to.
+      allow read: if isAdmin() ||
+        isSessionOwnerDoc() ||
+        (isSignedIn() &&
+         exists(/databases/$(database)/documents/sessions/$(sessionId)/players/$(request.auth.uid)));
 
       // Only approved instructors/admin can create
       allow create: if isApprovedInstructor();
@@ -87,9 +91,10 @@ service cloud.firestore {
       }
     }
 
-    // Session codes lookup
+    // Session codes lookup - resolved server-side by joinSession callable only.
+    // Clients must not enumerate codes.
     match /sessionCodes/{code} {
-      allow read: if isSignedIn();
+      allow read: if false;
       allow write: if false;
     }
   }

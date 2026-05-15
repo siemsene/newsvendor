@@ -2,8 +2,12 @@ import * as admin from "firebase-admin";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { isAdminEmail } from "./auth";
 import { sendAdminNewApplicationNotification } from "./email";
+import { checkAndRecordIp, getClientIp } from "./rateLimit";
 
 export const registerInstructor = onCall(async (request) => {
+    const ip = getClientIp(request.rawRequest);
+    await checkAndRecordIp(ip, "register", { maxPerHour: 3 });
+
     const email = String(request.data?.email ?? "").trim().toLowerCase();
     const password = String(request.data?.password ?? "");
     const displayName = String(request.data?.displayName ?? "").trim();
