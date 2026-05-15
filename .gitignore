@@ -4,7 +4,6 @@
 .firebaserc
 
 # Firebase Hosting
-/firebase.json
 /dist/
 *.cache
 hosting/.cache
@@ -13,7 +12,6 @@ hosting/.cache
 /functions/node_modules/
 /functions/lib/
 /functions/.env
-/functions/package-lock.json
 /functions/functions.yaml
 
 # TypeScript build cache
@@ -34,3 +32,6 @@ yarn-error.log*
 /.env
 /.env.*
 node_modules
+
+# Claude Code local settings
+.claude/settings.local.json

@@ -2,7 +2,7 @@ import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getFunctions } from "firebase/functions";
-import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "firebase/app-check";
+import { initializeAppCheck, ReCaptchaV3Provider } from "firebase/app-check";
 
 // Prefer .env values, but fall back to a baked-in config so the app runs out of the box.
 // You can remove the fallback if you prefer not to commit config values.
@@ -29,7 +29,7 @@ if (import.meta.env.DEV) {
 const recaptchaKey = import.meta.env.VITE_APPCHECK_RECAPTCHA_SITE_KEY;
 if (recaptchaKey) {
   initializeAppCheck(app, {
-    provider: new ReCaptchaEnterpriseProvider(recaptchaKey),
+    provider: new ReCaptchaV3Provider(recaptchaKey),
     isTokenAutoRefreshEnabled: true,
   });
 }
