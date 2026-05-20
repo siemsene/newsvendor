@@ -32,7 +32,7 @@ export {
 admin.initializeApp();
 setGlobalOptions({ region: "us-central1", enforceAppCheck: true, maxInstances: 30 });
 
-const MAX_PLAYERS_PER_SESSION = 150;
+const MAX_PLAYERS_PER_SESSION = 200;
 
 const db = admin.firestore();
 

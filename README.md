@@ -8,7 +8,7 @@ This is V1.
 
 ## Hosting
 
-I host this version of the game at https://go.wisc.edu/z301dk. You can set up a session with the password Sesame, and log in as a player using a separate browser window. I would appreciate some playtesting, if you have the time, and feel free to use it in the classroom!. I added a guide on how to set up hosting yourself for free [here](https://github.com/siemsene/beergame/blob/main/Howtohost.md).
+I host this version of the game at https://go.wisc.edu/z301dk. You can set up a session with the password Sesame, and log in as a player using a separate browser window. I would appreciate some playtesting, if you have the time, and feel free to use it in the classroom!. I added a guide on how to set up hosting yourself for free [here](HowToHost.md).
 
 The hosted game runs on cloud services (Firebase). These services are free only up to certain daily usage limits. Above those limits, I incur out-of-pocket costs.
 
